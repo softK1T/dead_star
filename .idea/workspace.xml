@@ -2,14 +2,66 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="bfe4ca68-9f2a-496e-85b9-83dcbcaef7e1" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/PythonProject.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/iso.csv" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/.env.example" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/dead_stars/api/main.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/dead_stars/api/routes/stars.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/dead_stars/catalog/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/dead_stars/classifier/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/dead_stars/isochrones/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/dead_stars/physics/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/docker-compose.yml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/index.html" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/package.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/postcss.config.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/App.tsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/api/stars.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/components/SkyMap.tsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/components/StarDetail.tsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/components/StarTable.tsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/hooks/useStars.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/index.css" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/main.tsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/types/star.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/src/vite-env.d.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/tailwind.config.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/tsconfig.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/frontend/vite.config.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/main.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dead_stars/pyproject.toml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/README.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/eslint.config.js" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/index.html" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/package-lock.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/package.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/public/favicon.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/public/icons.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/App.css" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/App.tsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/api/stars.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/assets/hero.png" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/assets/react.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/assets/vite.svg" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/components/skyMap.tsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/hooks/useStars.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/index.css" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/main.tsx" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/src/types/star.ts" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/tsconfig.app.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/tsconfig.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/tsconfig.node.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/frontend/vite.config.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/PythonProject.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/PythonProject.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dead_stars/catalog/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/dead_stars/dead_stars/api/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dead_stars/catalog/hipparcos.py" beforeDir="false" afterPath="$PROJECT_DIR$/dead_stars/dead_stars/catalog/hipparcos.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dead_stars/classifier/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/dead_stars/dead_stars/api/routes/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dead_stars/classifier/status.py" beforeDir="false" afterPath="$PROJECT_DIR$/dead_stars/dead_stars/classifier/status.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dead_stars/isochrones/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/dead_stars/isochrones/estimator.py" beforeDir="false" afterPath="$PROJECT_DIR$/dead_stars/dead_stars/isochrones/estimator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/dead_stars/physics/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/dead_stars/physics/stellar.py" beforeDir="false" afterPath="$PROJECT_DIR$/dead_stars/dead_stars/physics/stellar.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -20,6 +72,8 @@
     <option name="RECENT_TEMPLATES">
       <list>
         <option value="Python Script" />
+        <option value="TypeScript File" />
+        <option value="TypeScript JSX File" />
       </list>
     </option>
   </component>
@@ -44,9 +98,10 @@
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
     "codeWithMe.voiceChat.enabledByDefault": "false",
-    "git-widget-placeholder": "main",
+    "git-widget-placeholder": "dev",
     "last_opened_file_path": "/Users/kit/PycharmProjects/PythonProject",
     "nodejs_package_manager_path": "npm",
+    "ts.external.directory.path": "/Users/kit/PycharmProjects/PythonProject/frontend/node_modules/typescript/lib",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
@@ -57,6 +112,7 @@
     <key name="MoveFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$" />
       <recent name="$PROJECT_DIR$/dead_stars" />
+      <recent name="$PROJECT_DIR$/api" />
       <recent name="$PROJECT_DIR$/../dead_stars" />
     </key>
   </component>
@@ -74,7 +130,7 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1781347017217</updated>
-      <workItem from="1781347018231" duration="8532000" />
+      <workItem from="1781347018231" duration="12887000" />
     </task>
     <servers />
   </component>
@@ -82,6 +138,6 @@
     <option name="version" value="3" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
-    <SUITE FILE_PATH="coverage/PythonProject$main.coverage" NAME="main Coverage Results" MODIFIED="1781355938481" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
+    <SUITE FILE_PATH="coverage/PythonProject$main.coverage" NAME="main Coverage Results" MODIFIED="1781356051299" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
   </component>
 </project>
