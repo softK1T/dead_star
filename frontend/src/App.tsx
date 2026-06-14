@@ -10,15 +10,19 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [selectedHip, setSelectedHip] = useState<number | null>(null);
 
-  const { data, isLoading } = useStars(statusFilter || undefined, search || undefined, page);
-  const { data: stats } = useStats();
+  // таблица — постраничная, 50 за раз
+  const { data, isLoading } = useStars(statusFilter || undefined, search || undefined, page, 50);
 
-  const allStars = data?.data ?? [];
+  // 3D карта — до 5000 звёзд одним запросом, фильтр по статусу тот же
+  const { data: mapData } = useStars(statusFilter || undefined, undefined, 1, 5000);
+
+  const { data: stats } = useStats();
+  const mapStars = mapData?.data ?? [];
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white">
       <header className="bg-gray-800 px-4 py-2 flex items-center gap-6 shrink-0">
-        <h1 className="text-xl font-bold">Dead Stars</h1>
+        <h1 className="text-xl font-bold tracking-wide">✦ Dead Stars</h1>
         {stats && (
           <div className="flex gap-4 text-sm">
             <span>Total: <strong>{stats.total}</strong></span>
@@ -30,8 +34,8 @@ export default function App() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-1/2 p-2">
-          <SkyMap stars={allStars} />
+        <div className="w-1/2 p-1">
+          <SkyMap stars={mapStars} />
         </div>
 
         <div className="w-1/2 flex flex-col overflow-hidden">
@@ -41,16 +45,16 @@ export default function App() {
               isLoading={isLoading}
               onSelect={setSelectedHip}
               statusFilter={statusFilter}
-              onStatusChange={setStatusFilter}
+              onStatusChange={(s) => { setStatusFilter(s); setPage(1); }}
               search={search}
-              onSearchChange={setSearch}
+              onSearchChange={(s) => { setSearch(s); setPage(1); }}
               page={page}
               onPageChange={setPage}
             />
           </div>
 
           {selectedHip && (
-            <div className="border-t border-gray-700 bg-gray-850 p-4 shrink-0 overflow-auto max-h-72">
+            <div className="border-t border-gray-700 p-4 shrink-0 overflow-auto max-h-72">
               <StarDetail hipId={selectedHip} onClose={() => setSelectedHip(null)} />
             </div>
           )}
