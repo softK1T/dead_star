@@ -41,37 +41,58 @@ function xyz(d: number, ra: number, dec: number) {
   );
 }
 
+/*
+  Strategy: aSize is already in PIXELS (computed in JS based on luminosity).
+  In the vertex shader we just scale by distance so that near stars get bigger
+  and far stars shrink — but we set a generous minimum (2px) so they're always visible.
+  Halo is moderate; only the very brightest stars bloom noticeably.
+*/
 const VERT = /* glsl */`
-  attribute float aSize;
+  attribute float aSize;      // base px size at reference distance
   attribute vec3  aColor;
   attribute float aHighlight;
+  uniform   float uRefDist;   // reference camera distance for calibration
   varying   vec3  vColor;
   varying   float vHL;
-  varying   float vAlpha;
+  varying   float vBrightness;
+
   void main() {
     vColor = aColor;
     vHL    = aHighlight;
-    vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-    float dist = -mvPos.z;
-    float att  = aSize * 300.0 / max(dist, 1.0);
-    gl_PointSize = clamp(att, 1.0, 28.0) * (1.0 + aHighlight * 1.4);
-    vAlpha = clamp(att / 2.0, 0.15, 1.0);
+
+    vec4  mvPos   = modelViewMatrix * vec4(position, 1.0);
+    float dist    = -mvPos.z;
+
+    // scale so size stays roughly constant at reference distance,
+    // shrinks at 2x distance, grows at 0.5x — but clamped
+    float scale   = uRefDist / max(dist, 1.0);
+    float px      = aSize * clamp(scale, 0.25, 4.0);
+    gl_PointSize  = clamp(px, 2.0, 22.0) * (1.0 + aHighlight * 1.6);
+
+    // brightness fades gracefully when star becomes tiny
+    vBrightness = clamp(px / 4.0, 0.3, 1.0);
+
     gl_Position = projectionMatrix * mvPos;
   }
 `;
+
 const FRAG = /* glsl */`
   varying vec3  vColor;
   varying float vHL;
-  varying float vAlpha;
+  varying float vBrightness;
+
   void main() {
     vec2  uv   = gl_PointCoord - 0.5;
     float d    = length(uv) * 2.0;
     if (d > 1.0) discard;
-    float core = exp(-d * d * 8.0);
-    float halo = exp(-d * d * 2.2) * 0.28;
-    float a    = (core + halo) * vAlpha;
-    vec3  col  = mix(vColor, vec3(1.0), core * 0.35);
-    col += vec3(vHL * 0.45) * core;
+
+    float core = exp(-d * d * 9.0);          // tight bright centre
+    float glow = exp(-d * d * 2.5) * 0.35;  // soft glow ring
+    float a    = (core + glow) * vBrightness;
+
+    vec3 col = mix(vColor, vec3(1.0), core * 0.4);  // core bleaches toward white
+    col += vec3(vHL * 0.5) * core;
+
     gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
   }
 `;
@@ -201,7 +222,8 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const radius = Math.max(bsz.length() * 0.55, 10);
 
     const camera = new THREE.PerspectiveCamera(70, W / H, 1, radius * 15);
-    camera.position.set(center.x, center.y, center.z + radius * 1.4);
+    const initDist = radius * 1.4;
+    camera.position.set(center.x, center.y, center.z + initDist);
     camera.lookAt(center);
 
     // background dust
@@ -214,12 +236,11 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const bgGeo = new THREE.BufferGeometry();
     bgGeo.setAttribute("position", new THREE.BufferAttribute(bgPos, 3));
     scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({
-      color: 0x263556, size: 0.8, sizeAttenuation: false, transparent: true, opacity: 0.6,
+      color: 0x263556, size: 0.8, sizeAttenuation: false, transparent: true, opacity: 0.5,
     })));
 
-    // ---- build one Points object: data stars + Sun as last entry ----
-    const n = parsed.length;
-    // +1 slot for the Sun at origin
+    // data stars  (+1 for Sun)
+    const n   = parsed.length;
     const pos = new Float32Array((n + 1) * 3);
     const col = new Float32Array((n + 1) * 3);
     const siz = new Float32Array(n + 1);
@@ -230,16 +251,15 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       pos[i*3] = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
       const c = spectralColor(s.SpType);
       col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
+      // pixel size at reference distance: 3..14px based on log-luminosity
       const lum  = s.L > 0 ? Math.log10(s.L + 1) : 0;
-      const base = 0.8 + lum * 1.6;
-      siz[i] = s.status === "likely dead" ? base * 1.5 : base;
+      const base = 3 + lum * 3.5;   // dim=3px, Sun-like=~5px, very bright=~14px
+      siz[i] = s.status === "likely dead" ? Math.min(base * 1.4, 14) : Math.min(base, 14);
     }
-
-    // Sun entry — same shader, reasonable size
-    const si = n;
-    pos[si*3] = 0; pos[si*3+1] = 0; pos[si*3+2] = 0;   // origin
-    col[si*3] = 1.0; col[si*3+1] = 0.95; col[si*3+2] = 0.6; // warm yellow
-    siz[si] = 2.5;  // same world-unit scale as other G-type stars
+    // Sun
+    pos[n*3] = 0; pos[n*3+1] = 0; pos[n*3+2] = 0;
+    col[n*3] = 1.0; col[n*3+1] = 0.94; col[n*3+2] = 0.55;
+    siz[n] = 6; // slightly brighter than average, not dominant
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position",   new THREE.BufferAttribute(pos, 3));
@@ -250,11 +270,13 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     geo.setAttribute("aHighlight", hlAttr);
     hlRef.current = hlAttr;
 
-    scene.add(new THREE.Points(geo, new THREE.ShaderMaterial({
+    const mat = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: FRAG,
       transparent: true, depthWrite: false,
       blending: THREE.AdditiveBlending,
-    })));
+      uniforms: { uRefDist: { value: initDist } },
+    });
+    scene.add(new THREE.Points(geo, mat));
 
     // controls
     const keys: Record<string, boolean> = {};
@@ -305,6 +327,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       if (keys["KeyA"] || keys["ArrowLeft"])  camera.position.addScaledVector(right, -spd);
       if (keys["KeyE"] || keys["Space"])      camera.position.y += spd;
       if (keys["KeyQ"] || keys["ShiftLeft"])  camera.position.y -= spd;
+      // update reference distance uniform so shader scales correctly as you fly
+      const camDist = camera.position.distanceTo(center);
+      mat.uniforms.uRefDist.value = camDist;
       renderer.render(scene, camera);
     };
     tick();
