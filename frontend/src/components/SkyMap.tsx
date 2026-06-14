@@ -1,8 +1,7 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import * as THREE from "three";
 import type { Star } from "../types/star";
 
-// 1 ly = 1 unit in scene. Camera starts far back so full galaxy is visible.
 function spectralColor(spType: string): THREE.Color {
   const c = (spType || "").trim().toUpperCase()[0];
   if (c === "O") return new THREE.Color(0x9bb0ff);
@@ -16,7 +15,7 @@ function spectralColor(spType: string): THREE.Color {
 }
 
 function toXYZ(s: Star): THREE.Vector3 {
-  const d   = s.distance_ly;           // raw ly, 1 unit = 1 ly
+  const d   = s.distance_ly;
   const ra  = (s.RAdeg  * Math.PI) / 180;
   const dec = (s.DEdeg  * Math.PI) / 180;
   return new THREE.Vector3(
@@ -29,25 +28,39 @@ function toXYZ(s: Star): THREE.Vector3 {
 export default function SkyMap({ stars }: { stars: Star[] }) {
   const mountRef   = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const [dbg, setDbg] = useState("");
 
-  const validStars = useMemo(() =>
-    stars.filter(s =>
+  const validStars = useMemo(() => {
+    const v = stars.filter(s =>
       s.distance_ly > 0 &&
       s.distance_ly <= 50_000 &&
       s.RAdeg != null &&
       s.DEdeg != null
-    ), [stars]);
+    );
+    return v;
+  }, [stars]);
 
   useEffect(() => {
     const el = mountRef.current;
-    if (!el || validStars.length === 0) return;
+    if (!el) return;
+
+    // show debug info regardless of star count
+    if (validStars.length === 0) {
+      const sample = stars[0];
+      setDbg(`total props: ${stars.length} | valid: 0 | sample: ${JSON.stringify(sample)}`);
+      return;
+    }
+
+    const s0 = validStars[0];
+    const v0 = toXYZ(s0);
+    setDbg(`stars: ${validStars.length} | first HIP:${s0.HIP} d:${s0.distance_ly?.toFixed(0)}ly xyz:(${v0.x.toFixed(0)},${v0.y.toFixed(0)},${v0.z.toFixed(0)})`);
+
     cleanupRef.current?.();
     cleanupRef.current = null;
 
     const W = el.clientWidth  || 800;
     const H = el.clientHeight || 600;
 
-    // --- Renderer ---
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(W, H);
@@ -55,54 +68,59 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     el.appendChild(renderer.domElement);
 
     const scene  = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, W / H, 0.1, 500_000);
 
-    // Camera starts at Sun (origin), pulled back on Z so stars fill the FOV
-    const camera = new THREE.PerspectiveCamera(75, W / H, 1, 200_000);
-    camera.position.set(0, 0, 800);
-    camera.lookAt(0, 0, 0);
+    // compute bounding sphere of all stars and place camera outside it
+    const positions = validStars.map(toXYZ);
+    const box = new THREE.Box3();
+    positions.forEach(p => box.expandByPoint(p));
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+    const size   = new THREE.Vector3();
+    box.getSize(size);
+    const radius = size.length() * 0.6;
 
-    // --- Background dust ---
-    {
-      const N   = 5000;
-      const pos = new Float32Array(N * 3);
-      for (let i = 0; i < N; i++) {
-        pos[i*3]   = (Math.random() - 0.5) * 120_000;
-        pos[i*3+1] = (Math.random() - 0.5) * 120_000;
-        pos[i*3+2] = (Math.random() - 0.5) * 120_000;
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-      scene.add(new THREE.Points(g, new THREE.PointsMaterial({
-        color: 0x2a3a5a, size: 0.5, sizeAttenuation: false,
-      })));
+    camera.position.copy(center);
+    camera.position.z += radius * 1.2;
+    camera.lookAt(center);
+
+    setDbg(prev => prev + ` | cam z:${camera.position.z.toFixed(0)} radius:${radius.toFixed(0)}`);
+
+    // background dust
+    const bgPos = new Float32Array(5000 * 3);
+    for (let i = 0; i < 5000; i++) {
+      bgPos[i*3]   = center.x + (Math.random() - 0.5) * radius * 3;
+      bgPos[i*3+1] = center.y + (Math.random() - 0.5) * radius * 3;
+      bgPos[i*3+2] = center.z + (Math.random() - 0.5) * radius * 3;
     }
+    const bgGeo = new THREE.BufferGeometry();
+    bgGeo.setAttribute("position", new THREE.BufferAttribute(bgPos, 3));
+    scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({
+      color: 0x223355, size: 1.0, sizeAttenuation: false,
+    })));
 
-    // --- Hipparcos stars ---
+    // star points
     const n      = validStars.length;
     const pos    = new Float32Array(n * 3);
     const colors = new Float32Array(n * 3);
     const sizes  = new Float32Array(n);
 
     for (let i = 0; i < n; i++) {
-      const s    = validStars[i];
-      const v    = toXYZ(s);
-      pos[i*3]   = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
-
+      const s = validStars[i];
+      const v = positions[i];
+      pos[i*3] = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
       const col = spectralColor(s.SpType);
       colors[i*3] = col.r; colors[i*3+1] = col.g; colors[i*3+2] = col.b;
-
-      // luminosity -> size (px, not attenuated)
       const lum  = s.L && +s.L > 0 ? Math.log10(+s.L + 1) : 0.3;
-      const base = Math.max(1.2, Math.min(5, lum * 1.8));
-      sizes[i]   = s.status === "likely dead" ? base * 1.6 : base;
+      sizes[i]   = Math.max(2, Math.min(6, lum * 2)) * (s.status === "likely dead" ? 1.6 : 1);
     }
 
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute("position", new THREE.BufferAttribute(pos,    3));
-    starGeo.setAttribute("color",    new THREE.BufferAttribute(colors, 3));
-    starGeo.setAttribute("aSize",    new THREE.BufferAttribute(sizes,  1));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos,    3));
+    geo.setAttribute("color",    new THREE.BufferAttribute(colors, 3));
+    geo.setAttribute("aSize",    new THREE.BufferAttribute(sizes,  1));
 
-    const starMat = new THREE.ShaderMaterial({
+    const mat = new THREE.ShaderMaterial({
       vertexShader: `
         attribute float aSize;
         attribute vec3  color;
@@ -119,9 +137,8 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
           vec2  uv = gl_PointCoord - 0.5;
           float d  = length(uv);
           if (d > 0.5) discard;
-          float core = 1.0 - smoothstep(0.0, 0.5, d);
-          float halo = exp(-d * d * 8.0) * 0.5;
-          gl_FragColor = vec4(vCol + halo * 0.3, clamp(core + halo, 0.0, 1.0));
+          float a = 1.0 - smoothstep(0.1, 0.5, d);
+          gl_FragColor = vec4(vCol, a);
         }
       `,
       transparent: true,
@@ -129,41 +146,33 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       blending:    THREE.AdditiveBlending,
       vertexColors: true,
     });
+    scene.add(new THREE.Points(geo, mat));
 
-    scene.add(new THREE.Points(starGeo, starMat));
+    // Sun sprite
+    const sc = document.createElement("canvas");
+    sc.width = sc.height = 64;
+    const sctx = sc.getContext("2d")!;
+    const sg   = sctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    sg.addColorStop(0, "rgba(253,233,138,1)");
+    sg.addColorStop(1, "rgba(0,0,0,0)");
+    sctx.fillStyle = sg;
+    sctx.fillRect(0, 0, 64, 64);
+    const sunSp = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(sc), blending: THREE.AdditiveBlending, transparent: true,
+    }));
+    sunSp.scale.set(radius * 0.05, radius * 0.05, 1);
+    scene.add(sunSp);
 
-    // --- Sun glow at origin ---
-    {
-      const c = document.createElement("canvas");
-      c.width = c.height = 64;
-      const ctx  = c.getContext("2d")!;
-      const g    = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-      g.addColorStop(0,   "rgba(253,233,138,1)");
-      g.addColorStop(0.4, "rgba(253,180,60,0.6)");
-      g.addColorStop(1,   "rgba(0,0,0,0)");
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, 64, 64);
-      const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: new THREE.CanvasTexture(c),
-        blending: THREE.AdditiveBlending,
-        transparent: true,
-      }));
-      sp.scale.set(120, 120, 1);
-      scene.add(sp);
-    }
+    // controls
+    const keys: Record<string, boolean> = {};
+    const euler = new THREE.Euler(0, 0, 0, "YXZ");
+    let locked  = false;
+    euler.setFromQuaternion(camera.quaternion);
 
-    // --- Mouse-look + WASD flight ---
-    const keys:  Record<string, boolean> = {};
-    const euler  = new THREE.Euler(0, Math.PI, 0, "YXZ"); // face -Z (toward stars)
-    const quat   = new THREE.Quaternion().setFromEuler(euler);
-    camera.quaternion.copy(quat);
-    let locked = false;
-
-    const onKD = (e: KeyboardEvent) => { keys[e.code] = true;  e.code === "Space" && e.preventDefault(); };
+    const onKD = (e: KeyboardEvent) => { keys[e.code] = true; };
     const onKU = (e: KeyboardEvent) => { keys[e.code] = false; };
     window.addEventListener("keydown", onKD);
     window.addEventListener("keyup",   onKU);
-
     renderer.domElement.addEventListener("click", () => renderer.domElement.requestPointerLock());
     const onLC = () => { locked = document.pointerLockElement === renderer.domElement; };
     const onMM = (e: MouseEvent) => {
@@ -175,17 +184,15 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     document.addEventListener("pointerlockchange", onLC);
     document.addEventListener("mousemove", onMM);
 
-    let speed = 200; // ly / s
+    let speed = radius * 0.3;
     const onWheel = (e: WheelEvent) => {
-      speed = Math.max(10, Math.min(10_000, speed * (e.deltaY > 0 ? 0.85 : 1.18)));
+      speed = Math.max(1, Math.min(radius * 5, speed * (e.deltaY > 0 ? 0.85 : 1.18)));
     };
     el.addEventListener("wheel", onWheel, { passive: true });
 
     const resizeObs = new ResizeObserver(() => {
       const w = el.clientWidth, h = el.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
+      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
     });
     resizeObs.observe(el);
 
@@ -196,19 +203,15 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
 
     const tick = () => {
       animId = requestAnimationFrame(tick);
-      const dt  = Math.min(clock.getDelta(), 0.05);
-      const spd = speed * dt;
-
+      const spd = speed * Math.min(clock.getDelta(), 0.05);
       camera.getWorldDirection(fwd);
       right.crossVectors(fwd, camera.up).normalize();
-
       if (keys["KeyW"] || keys["ArrowUp"])    camera.position.addScaledVector(fwd,    spd);
       if (keys["KeyS"] || keys["ArrowDown"])  camera.position.addScaledVector(fwd,   -spd);
       if (keys["KeyD"] || keys["ArrowRight"]) camera.position.addScaledVector(right,  spd);
       if (keys["KeyA"] || keys["ArrowLeft"])  camera.position.addScaledVector(right, -spd);
       if (keys["KeyE"] || keys["Space"])      camera.position.y +=  spd;
       if (keys["KeyQ"] || keys["ShiftLeft"])  camera.position.y -= spd;
-
       renderer.render(scene, camera);
     };
     tick();
@@ -231,6 +234,15 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
 
+      {/* debug bar */}
+      <div style={{
+        position: "absolute", top: 0, left: 0, right: 0,
+        background: "rgba(255,0,0,0.15)", color: "#f87",
+        fontSize: 10, padding: "3px 8px",
+        fontFamily: "monospace", pointerEvents: "none",
+        zIndex: 99, wordBreak: "break-all",
+      }}>{dbg}</div>
+
       <div style={{ ...panel, bottom: 14, left: 14 }}>
         <div style={{ color: "#7a82a6", fontWeight: 600, marginBottom: 3 }}>NAVIGATION</div>
         <div>Click to capture mouse</div>
@@ -241,7 +253,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         <div>Esc &mdash; release</div>
       </div>
 
-      <div style={{ ...panel, top: 14, left: 14, color: "#7a82a6" }}>
+      <div style={{ ...panel, top: 30, left: 14, color: "#7a82a6" }}>
         {([
           ["#f04a4a", "likely dead"],
           ["#f0b84a", "uncertain"],
@@ -263,12 +275,8 @@ const panel: React.CSSProperties = {
   position: "absolute",
   background: "rgba(4,5,15,0.82)",
   border: "1px solid rgba(255,255,255,0.07)",
-  borderRadius: 8,
-  padding: "8px 14px",
-  fontSize: 11,
-  color: "#3d4460",
-  lineHeight: 1.9,
+  borderRadius: 8, padding: "8px 14px",
+  fontSize: 11, color: "#3d4460", lineHeight: 1.9,
   backdropFilter: "blur(6px)",
-  userSelect: "none",
-  pointerEvents: "none",
+  userSelect: "none", pointerEvents: "none",
 };
