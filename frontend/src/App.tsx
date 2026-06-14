@@ -14,14 +14,35 @@ const MAP_COUNTS = [
 
 export default function App() {
   const [statusFilter, setStatusFilter] = useState("");
+  const [spectralFilter, setSpectralFilter] = useState("");
+  const [distMin, setDistMin] = useState("");
+  const [distMax, setDistMax] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selectedHip, setSelectedHip] = useState<number | null>(null);
   const [flyToHip, setFlyToHip] = useState<number | null>(null);
   const [mapCount, setMapCount] = useState(3_000);
 
-  const { data, isLoading } = useStars(statusFilter || undefined, search || undefined, page, 50);
-  const { data: mapData, isLoading: mapLoading } = useStars(statusFilter || undefined, undefined, 1, mapCount, true);
+  const { data, isLoading } = useStars(
+    statusFilter || undefined,
+    search || undefined,
+    page, 50,
+    false,
+    spectralFilter || undefined,
+    distMin ? Number(distMin) : undefined,
+    distMax ? Number(distMax) : undefined,
+  );
+
+  const { data: mapData, isLoading: mapLoading } = useStars(
+    statusFilter || undefined,
+    undefined,
+    1, mapCount,
+    true,
+    spectralFilter || undefined,
+    distMin ? Number(distMin) : undefined,
+    distMax ? Number(distMax) : undefined,
+  );
+
   const { data: stats } = useStats();
   const mapStars = mapData?.data ?? [];
 
@@ -76,9 +97,7 @@ export default function App() {
 
         {/* Star count selector */}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-            Stars on map
-          </span>
+          <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>Stars on map</span>
           <div style={{ display: "flex", gap: 3 }}>
             {MAP_COUNTS.map(({ label, value }) => {
               const active = mapCount === value;
@@ -87,38 +106,23 @@ export default function App() {
                   key={value}
                   onClick={() => setMapCount(value)}
                   style={{
-                    padding: "3px 9px",
-                    fontSize: 11,
+                    padding: "3px 9px", fontSize: 11,
                     fontWeight: active ? 700 : 400,
                     borderRadius: 6,
-                    border: active
-                      ? "1px solid rgba(255,255,255,0.18)"
-                      : "1px solid rgba(255,255,255,0.06)",
+                    border: active ? "1px solid rgba(255,255,255,0.18)" : "1px solid rgba(255,255,255,0.06)",
                     background: active ? "rgba(255,255,255,0.10)" : "transparent",
                     color: active ? "var(--text)" : "var(--text-muted)",
                     cursor: "pointer",
                     transition: "all 0.15s",
-                    position: "relative",
                   }}
-                  onMouseEnter={e => {
-                    if (!active) {
-                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.05)";
-                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text)";
-                    }
-                  }}
-                  onMouseLeave={e => {
-                    if (!active) {
-                      (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
-                    }
-                  }}
+                  onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.05)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text)"; } }}
+                  onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)"; } }}
                 >
                   {label}
                 </button>
               );
             })}
           </div>
-          {/* Loading indicator */}
           {mapLoading && (
             <div style={{ width: 14, height: 14, flexShrink: 0 }}>
               <svg viewBox="0 0 14 14" fill="none" style={{ animation: "spin 1s linear infinite", display: "block" }}>
@@ -154,6 +158,12 @@ export default function App() {
               onSearchChange={(s) => { setSearch(s); setPage(1); }}
               page={page}
               onPageChange={setPage}
+              spectralFilter={spectralFilter}
+              onSpectralChange={(s) => { setSpectralFilter(s); setPage(1); }}
+              distMin={distMin}
+              distMax={distMax}
+              onDistMinChange={(s) => { setDistMin(s); setPage(1); }}
+              onDistMaxChange={(s) => { setDistMax(s); setPage(1); }}
             />
           </div>
 
@@ -172,9 +182,7 @@ export default function App() {
         </div>
       </div>
 
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-      `}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

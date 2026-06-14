@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { StarsResponse } from "../types/star";
 
 interface Props {
@@ -11,9 +12,22 @@ interface Props {
   onSearchChange: (s: string) => void;
   page: number;
   onPageChange: (p: number) => void;
+  spectralFilter: string;
+  onSpectralChange: (s: string) => void;
+  distMin: string;
+  distMax: string;
+  onDistMinChange: (s: string) => void;
+  onDistMaxChange: (s: string) => void;
 }
 
-const STATUS_OPTIONS = ["", "likely dead", "uncertain", "alive"];
+const SPECTRAL_TYPES = ["", "O", "B", "A", "F", "G", "K", "M"];
+
+const STATUS_BTNS: { label: string; value: string; cls: string }[] = [
+  { label: "All",       value: "",           cls: "" },
+  { label: "☠ Dead",   value: "likely dead", cls: "dead" },
+  { label: "? Uncertain", value: "uncertain", cls: "uncertain" },
+  { label: "✦ Alive",  value: "alive",       cls: "alive" },
+];
 
 function badgeClass(s: string) {
   if (s === "likely dead") return "badge badge-dead";
@@ -26,40 +40,186 @@ export default function StarTable({
   statusFilter, onStatusChange,
   search, onSearchChange,
   page, onPageChange,
+  spectralFilter, onSpectralChange,
+  distMin, distMax, onDistMinChange, onDistMaxChange,
 }: Props) {
+  const [showFilters, setShowFilters] = useState(false);
   const totalPages = data ? Math.ceil(data.total / data.limit) : 1;
+  const activeFilterCount = [statusFilter, spectralFilter, distMin, distMax].filter(Boolean).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
-      {/* Controls */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <select
-          value={statusFilter}
-          onChange={(e) => { onStatusChange(e.target.value); onPageChange(1); }}
-          className="ctrl"
-        >
-          {STATUS_OPTIONS.map((s) => (
-            <option key={s} value={s}>{s || "All statuses"}</option>
-          ))}
-        </select>
-
+      {/* Top bar */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input
           type="text"
           placeholder="Search HIP..."
           value={search}
           onChange={(e) => { onSearchChange(e.target.value); onPageChange(1); }}
           className="ctrl"
-          style={{ minWidth: 130 }}
+          style={{ flex: 1, minWidth: 0 }}
         />
-
-        <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: "auto" }}>
-          <button className="btn" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}>Prev</button>
-          <span style={{ fontSize: 12, color: "var(--text-muted)", minWidth: 70, textAlign: "center" }}>
+        <button
+          className="btn"
+          onClick={() => setShowFilters(v => !v)}
+          style={{
+            display: "flex", alignItems: "center", gap: 5,
+            background: showFilters ? "rgba(255,255,255,0.08)" : undefined,
+            position: "relative",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+            <path d="M1 3h14M3 8h10M6 13h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+          Filters
+          {activeFilterCount > 0 && (
+            <span style={{
+              position: "absolute", top: -4, right: -4,
+              background: "var(--dead)", color: "#fff",
+              borderRadius: "50%", width: 14, height: 14,
+              fontSize: 9, fontWeight: 700,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>{activeFilterCount}</span>
+          )}
+        </button>
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <button className="btn" onClick={() => onPageChange(Math.max(1, page - 1))} disabled={page <= 1}>‹</button>
+          <span style={{ fontSize: 12, color: "var(--text-muted)", minWidth: 60, textAlign: "center" }}>
             {page} / {totalPages}
           </span>
-          <button className="btn" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>Next</button>
+          <button className="btn" onClick={() => onPageChange(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>›</button>
         </div>
       </div>
+
+      {/* Expandable filters panel */}
+      {showFilters && (
+        <div style={{
+          background: "var(--surface)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-lg)",
+          padding: "10px 14px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 10,
+        }}>
+          {/* Status toggles */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-faint)" }}>Status</span>
+            <div style={{ display: "flex", gap: 5 }}>
+              {STATUS_BTNS.map(({ label, value, cls }) => {
+                const active = statusFilter === value;
+                return (
+                  <button
+                    key={value}
+                    onClick={() => { onStatusChange(value); onPageChange(1); }}
+                    style={{
+                      padding: "4px 10px",
+                      fontSize: 12,
+                      fontWeight: active ? 600 : 400,
+                      borderRadius: 6,
+                      border: active
+                        ? `1px solid var(--${cls || "text-muted"})`
+                        : "1px solid var(--border)",
+                      background: active
+                        ? `color-mix(in oklch, var(--${cls || "surface-2"}) 18%, transparent)`
+                        : "transparent",
+                      color: active
+                        ? (cls ? `var(--${cls})` : "var(--text)")
+                        : "var(--text-muted)",
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Spectral type */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-faint)" }}>Spectral Type</span>
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {SPECTRAL_TYPES.map((sp) => {
+                const active = spectralFilter === sp;
+                return (
+                  <button
+                    key={sp || "all"}
+                    onClick={() => { onSpectralChange(sp); onPageChange(1); }}
+                    style={{
+                      padding: "3px 9px",
+                      fontSize: 12,
+                      fontFamily: "monospace",
+                      borderRadius: 6,
+                      border: active ? "1px solid rgba(255,255,255,0.2)" : "1px solid var(--border)",
+                      background: active ? "rgba(255,255,255,0.10)" : "transparent",
+                      color: active ? "var(--text)" : "var(--text-muted)",
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {sp || "All"}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Distance range */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--text-faint)" }}>Distance (ly)</span>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input
+                type="number"
+                placeholder="Min"
+                value={distMin}
+                onChange={(e) => { onDistMinChange(e.target.value); onPageChange(1); }}
+                className="ctrl"
+                style={{ width: 80 }}
+              />
+              <span style={{ color: "var(--text-faint)", fontSize: 12 }}>—</span>
+              <input
+                type="number"
+                placeholder="Max"
+                value={distMax}
+                onChange={(e) => { onDistMaxChange(e.target.value); onPageChange(1); }}
+                className="ctrl"
+                style={{ width: 80 }}
+              />
+              {(distMin || distMax) && (
+                <button
+                  className="btn"
+                  style={{ padding: "2px 7px", fontSize: 11 }}
+                  onClick={() => { onDistMinChange(""); onDistMaxChange(""); onPageChange(1); }}
+                >✕</button>
+              )}
+            </div>
+          </div>
+
+          {/* Reset all */}
+          {activeFilterCount > 0 && (
+            <button
+              style={{
+                alignSelf: "flex-start",
+                padding: "3px 10px", fontSize: 11,
+                borderRadius: 6, border: "1px solid var(--border)",
+                background: "transparent", color: "var(--text-muted)",
+                cursor: "pointer",
+              }}
+              onClick={() => {
+                onStatusChange("");
+                onSpectralChange("");
+                onDistMinChange("");
+                onDistMaxChange("");
+                onPageChange(1);
+              }}
+            >
+              Reset all filters
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Table */}
       <div style={{ overflowY: "auto", flex: 1, borderRadius: "var(--radius-lg)", border: "1px solid var(--border)" }}>
