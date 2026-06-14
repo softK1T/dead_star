@@ -14,5 +14,8 @@ dependencies = [
     "scikit-learn",
     "astroquery",
     "fastapi",
-    "uvicorn",
+    "uvicorn[standard]",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
