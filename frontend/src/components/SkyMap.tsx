@@ -41,8 +41,6 @@ function xyz(d: number, ra: number, dec: number) {
   );
 }
 
-// uRefDist = 500 ly: stars at 500ly appear at their base pixel size;
-// closer stars grow (up to 4x), farther shrink (down to 0.3x, floor 1.5px).
 const VERT = /* glsl */`
   attribute float aSize;
   attribute vec3  aColor;
@@ -151,38 +149,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     return stars.map(parse).filter((s): s is P => s !== null);
   }, [stars]);
 
-  const handleMouseMove = useCallback((
-    e: MouseEvent,
-    _renderer: THREE.WebGLRenderer,
-    camera: THREE.PerspectiveCamera,
-    geo: THREE.BufferGeometry,
-    el: HTMLDivElement,
-  ) => {
-    const now = Date.now();
-    if (now - lastMoveRef.current < 30) return;
-    lastMoveRef.current = now;
-    const rect = el.getBoundingClientRect();
-    const mx = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
-    const my = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
-    raycaster.params.Points!.threshold = Math.max(10, camera.position.length() * 0.02);
-    const pts = new THREE.Points(geo);
-    const hits = raycaster.intersectObject(pts);
-    const hlAttr = hlRef.current;
-    if (!hlAttr) return;
-    for (let i = 0; i < hlAttr.count; i++) hlAttr.setX(i, 0);
-    if (hits.length > 0) {
-      const idx = hits[0].index!;
-      hlAttr.setX(idx, 1);
-      const star = parsedRef.current[idx];
-      if (star) setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star });
-    } else {
-      setTooltip(null);
-    }
-    hlAttr.needsUpdate = true;
-  }, []);
-
   useEffect(() => { parsedRef.current = parsed; }, [parsed]);
 
   useEffect(() => {
@@ -201,25 +167,19 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     el.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-
-    // Far plane: max distance in dataset + generous margin
     const maxDist = parsed.reduce((m, s) => Math.max(m, s.distance_ly), 0);
     const FAR = Math.max(maxDist * 2.5, 200_000);
-    const NEAR = 0.5; // half a light year — fine grained near clipping
 
-    // Camera starts at the Sun (origin), looking toward galactic center (RA≈266°, Dec≈-29°)
-    const camera = new THREE.PerspectiveCamera(60, W / H, NEAR, FAR);
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.5, FAR);
     camera.position.set(0, 0, 0);
-    // look toward RA=266 Dec=-29 (approx galactic center direction)
     const gcRA = (266 * Math.PI) / 180, gcDec = (-29 * Math.PI) / 180;
-    const gcDir = new THREE.Vector3(
-      Math.cos(gcDec) * Math.cos(gcRA),
-      Math.sin(gcDec),
-      -Math.cos(gcDec) * Math.sin(gcRA),
+    camera.lookAt(
+      Math.cos(gcDec) * Math.cos(gcRA) * 1000,
+      Math.sin(gcDec) * 1000,
+      -Math.cos(gcDec) * Math.sin(gcRA) * 1000,
     );
-    camera.lookAt(gcDir.multiplyScalar(1000));
 
-    // Background dust cloud
+    // Background dust
     const bgPos = new Float32Array(12_000 * 3);
     for (let i = 0; i < 12_000; i++) {
       const d = Math.random() * FAR * 0.6;
@@ -235,7 +195,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       color: 0x1a2840, size: 0.7, sizeAttenuation: false, transparent: true, opacity: 0.45,
     })));
 
-    // Build star geometry: all parsed stars + Sun at index n
+    // Star geometry
     const n   = parsed.length;
     const pos = new Float32Array((n + 1) * 3);
     const col = new Float32Array((n + 1) * 3);
@@ -249,11 +209,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       const c = spectralColor(s.SpType);
       col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
       const lum  = s.L > 0 ? Math.log10(s.L + 1) : 0;
-      // base pixel size calibrated at uRefDist=500ly: 2px dim, ~5px solar-type, 12px very bright
       const base = 2 + lum * 3.2;
       siz[i] = s.status === "likely dead" ? Math.min(base * 1.35, 12) : Math.min(base, 12);
     }
-    // Sun — sits at origin, rendered same as any G2 star
     pos[n*3] = 0; pos[n*3+1] = 0; pos[n*3+2] = 0;
     col[n*3] = 1.0; col[n*3+1] = 0.94; col[n*3+2] = 0.55;
     siz[n] = 5;
@@ -267,17 +225,95 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     geo.setAttribute("aHighlight", hlAttr);
     hlRef.current = hlAttr;
 
-    // uRefDist = 500 ly (fixed) — star at 500ly shows at its base aSize
-    const REF_DIST = 500;
     const mat = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: FRAG,
       transparent: true, depthWrite: false,
       blending: THREE.AdditiveBlending,
-      uniforms: { uRefDist: { value: REF_DIST } },
+      uniforms: { uRefDist: { value: 500 } },
     });
-    scene.add(new THREE.Points(geo, mat));
+    // Persistent Points object — MUST be added to scene so matrixWorld is valid
+    const points = new THREE.Points(geo, mat);
+    scene.add(points);
 
-    // Flight controls
+    // Raycaster: threshold in WORLD UNITS = how many ly from the ray
+    // We want ~8px tolerance on screen. At distance D and FOV 60, 1px ≈ 2*D*tan(30°)/screenH
+    // We use a small fixed world threshold and rely on nearest-first sorting.
+    const raycaster = new THREE.Raycaster();
+    raycaster.params.Points = { threshold: 1 }; // 1 ly — tight, recalculated on each move
+
+    let prevHl = -1;
+
+    const onMM = (e: MouseEvent) => {
+      const now = Date.now();
+      if (now - lastMoveRef.current < 32) return;
+      lastMoveRef.current = now;
+
+      if (document.pointerLockElement === renderer.domElement) {
+        // flight mode — no tooltip
+        const euler = new THREE.Euler(0, 0, 0, "YXZ");
+        euler.setFromQuaternion(camera.quaternion);
+        euler.y -= e.movementX * 0.002;
+        euler.x  = Math.max(-1.5, Math.min(1.5, euler.x - e.movementY * 0.002));
+        camera.quaternion.setFromEuler(euler);
+        return;
+      }
+
+      const rect = el.getBoundingClientRect();
+      const mx = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+      const my = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
+
+      // threshold: ~6px in world units at the distance of nearest visible star
+      // tan(halfFov) * 2 / screenHeight gives world units per pixel at unit distance
+      const pxPerUnit = Math.tan((60 / 2) * Math.PI / 180) * 2 / sizeRef.current.h;
+      // Use a generous 12px pick radius but scale with distance
+      // We'll just set a reasonable world-space value and let Three sort by distance
+      raycaster.params.Points!.threshold = 12 * pxPerUnit * 200; // ~12px at 200ly ref
+
+      // intersectObject works correctly because `points` is in the scene
+      const hits = raycaster.intersectObject(points);
+
+      const hlAttr2 = hlRef.current;
+      if (!hlAttr2) return;
+
+      if (prevHl >= 0) { hlAttr2.setX(prevHl, 0); prevHl = -1; }
+
+      if (hits.length > 0) {
+        // Pick the hit closest to camera (Three already sorts by distance)
+        const idx = hits[0].index!;
+        // Extra guard: confirm this point is actually the nearest among all hits
+        // within 16px screen-space by comparing projected screen positions
+        let bestIdx = idx;
+        let bestDist2 = Infinity;
+        const proj = new THREE.Vector3();
+        for (const h of hits) {
+          const hi = h.index!;
+          proj.set(pos[hi*3], pos[hi*3+1], pos[hi*3+2]);
+          proj.project(camera);
+          const sx = (proj.x + 1) / 2 * sizeRef.current.w;
+          const sy = (1 - proj.y) / 2 * sizeRef.current.h;
+          const dx = sx - (e.clientX - rect.left);
+          const dy = sy - (e.clientY - rect.top);
+          const d2 = dx*dx + dy*dy;
+          if (d2 < bestDist2) { bestDist2 = d2; bestIdx = hi; }
+        }
+        // Only highlight if within 14px screen radius
+        if (Math.sqrt(bestDist2) <= 14) {
+          hlAttr2.setX(bestIdx, 1);
+          prevHl = bestIdx;
+          const star = parsedRef.current[bestIdx];
+          if (star) setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star });
+        } else {
+          setTooltip(null);
+        }
+      } else {
+        setTooltip(null);
+      }
+      hlAttr2.needsUpdate = true;
+    };
+
+    // Controls
     const keys: Record<string, boolean> = {};
     const euler = new THREE.Euler(0, 0, 0, "YXZ");
     let locked = false;
@@ -287,20 +323,13 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     window.addEventListener("keydown", onKD);
     window.addEventListener("keyup",   onKU);
     renderer.domElement.addEventListener("click", () => renderer.domElement.requestPointerLock());
-    const onLC = () => { locked = document.pointerLockElement === renderer.domElement; if (locked) setTooltip(null); };
-    const onMM = (ev: MouseEvent) => {
-      if (locked) {
-        euler.y -= ev.movementX * 0.002;
-        euler.x  = Math.max(-1.5, Math.min(1.5, euler.x - ev.movementY * 0.002));
-        camera.quaternion.setFromEuler(euler);
-      } else {
-        handleMouseMove(ev, renderer, camera, geo, el);
-      }
+    const onLC = () => {
+      locked = document.pointerLockElement === renderer.domElement;
+      if (locked) setTooltip(null);
     };
     document.addEventListener("pointerlockchange", onLC);
     document.addEventListener("mousemove", onMM);
 
-    // Speed: starts at 50 ly/s, scroll to adjust
     let speed = 50;
     el.addEventListener("wheel", (ev: WheelEvent) => {
       speed = Math.max(0.5, Math.min(50_000, speed * (ev.deltaY > 0 ? 0.82 : 1.22)));
@@ -341,7 +370,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       renderer.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };
-  }, [parsed, handleMouseMove]);
+  }, [parsed]);
 
   useEffect(() => () => { cleanupRef.current?.(); }, []);
 
