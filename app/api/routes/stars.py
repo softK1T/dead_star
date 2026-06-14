@@ -18,6 +18,9 @@ async def get_stars(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200000),
     map_mode: bool = Query(False),
+    spectral_type: str | None = Query(None),
+    dist_min: float | None = Query(None),
+    dist_max: float | None = Query(None),
 ):
     df: pd.DataFrame = request.app.state.df
 
@@ -25,11 +28,16 @@ async def get_stars(
         df = df[df["status"] == status]
     if search:
         df = df[df["HIP"].astype(str).str.contains(search, na=False)]
+    if spectral_type:
+        df = df[df["SpType"].astype(str).str.startswith(spectral_type, na=False)]
+    if dist_min is not None:
+        df = df[df["distance_ly"] >= dist_min]
+    if dist_max is not None:
+        df = df[df["distance_ly"] <= dist_max]
 
     total = len(df)
 
     if map_mode:
-        # Respect limit; sample evenly across distance so sky looks uniform
         sample = df if limit >= total else df.iloc[::max(1, total // limit)].head(limit)
         rows = sample[COLUMNS].fillna(value="").to_dict(orient="records")
         return {"data": rows, "total": total, "page": 1, "limit": len(rows)}

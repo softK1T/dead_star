@@ -9,9 +9,21 @@ export async function fetchStars(
   page = 1,
   limit = 50,
   mapMode = false,
+  spectralType?: string,
+  distMin?: number,
+  distMax?: number,
 ): Promise<StarsResponse> {
   const { data } = await api.get<StarsResponse>("/stars", {
-    params: { status, search, page, limit, map_mode: mapMode },
+    params: {
+      status,
+      search,
+      page,
+      limit,
+      map_mode: mapMode,
+      spectral_type: spectralType,
+      dist_min: distMin,
+      dist_max: distMax,
+    },
   });
   return data;
 }

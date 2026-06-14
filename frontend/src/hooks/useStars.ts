@@ -1,10 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchStars, fetchStar, fetchStats } from "../api/stars";
 
-export function useStars(status?: string, search?: string, page = 1, limit = 50, mapMode = false) {
+export function useStars(
+  status?: string,
+  search?: string,
+  page = 1,
+  limit = 50,
+  mapMode = false,
+  spectralType?: string,
+  distMin?: number,
+  distMax?: number,
+) {
   return useQuery({
-    queryKey: ["stars", status, search, page, limit, mapMode],
-    queryFn: () => fetchStars(status, search, page, limit, mapMode),
+    queryKey: ["stars", status, search, page, limit, mapMode, spectralType, distMin, distMax],
+    queryFn: () => fetchStars(status, search, page, limit, mapMode, spectralType, distMin, distMax),
   });
 }
 
