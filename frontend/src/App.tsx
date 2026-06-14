@@ -4,29 +4,34 @@ import SkyMap from "./components/SkyMap";
 import StarTable from "./components/StarTable";
 import StarDetail from "./components/StarDetail";
 
+const MAP_COUNTS = [
+  { label: "500",  value: 500 },
+  { label: "1k",   value: 1_000 },
+  { label: "3k",   value: 3_000 },
+  { label: "10k",  value: 10_000 },
+  { label: "All",  value: 99_999 },
+];
+
 export default function App() {
   const [statusFilter, setStatusFilter] = useState("");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selectedHip, setSelectedHip] = useState<number | null>(null);
-  // Camera target: when set, SkyMap flies to this HIP
   const [flyToHip, setFlyToHip] = useState<number | null>(null);
+  const [mapCount, setMapCount] = useState(3_000);
 
   const { data, isLoading } = useStars(statusFilter || undefined, search || undefined, page, 50);
-  const { data: mapData } = useStars(statusFilter || undefined, undefined, 1, 3000, true);
+  const { data: mapData, isLoading: mapLoading } = useStars(statusFilter || undefined, undefined, 1, mapCount, true);
   const { data: stats } = useStats();
   const mapStars = mapData?.data ?? [];
 
-  // Table row click → fly camera to star
   const handleSelectStar = useCallback((hip: number) => {
     setSelectedHip(hip);
     setFlyToHip(hip);
   }, []);
 
-  // 3D click → select in table + show detail
   const handleMapClick = useCallback((hip: number) => {
     setSelectedHip(hip);
-    // If star not in current page, search for it
     setSearch(String(hip));
     setPage(1);
   }, []);
@@ -55,10 +60,10 @@ export default function App() {
         {stats && (
           <div style={{ display: "flex", gap: 8, marginLeft: 8, flexWrap: "wrap" }}>
             {([
-              ["Total",     stats.total,        "",                  "var(--text)"],
-              ["Dead",      stats.likely_dead,   "dot-dead",         "var(--dead)"],
-              ["Uncertain", stats.uncertain,     "dot-uncertain",    "var(--uncertain)"],
-              ["Alive",     stats.alive,         "dot-alive",        "var(--alive)"],
+              ["Total",     stats.total,        "",               "var(--text)"],
+              ["Dead",      stats.likely_dead,   "dot-dead",       "var(--dead)"],
+              ["Uncertain", stats.uncertain,     "dot-uncertain",  "var(--uncertain)"],
+              ["Alive",     stats.alive,         "dot-alive",      "var(--alive)"],
             ] as [string, number, string, string][]).map(([label, val, dot, color]) => (
               <span key={label} className="stat-chip">
                 {dot && <span className={`dot ${dot}`} />}
@@ -68,11 +73,65 @@ export default function App() {
             ))}
           </div>
         )}
+
+        {/* Star count selector */}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+            Stars on map
+          </span>
+          <div style={{ display: "flex", gap: 3 }}>
+            {MAP_COUNTS.map(({ label, value }) => {
+              const active = mapCount === value;
+              return (
+                <button
+                  key={value}
+                  onClick={() => setMapCount(value)}
+                  style={{
+                    padding: "3px 9px",
+                    fontSize: 11,
+                    fontWeight: active ? 700 : 400,
+                    borderRadius: 6,
+                    border: active
+                      ? "1px solid rgba(255,255,255,0.18)"
+                      : "1px solid rgba(255,255,255,0.06)",
+                    background: active ? "rgba(255,255,255,0.10)" : "transparent",
+                    color: active ? "var(--text)" : "var(--text-muted)",
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                    position: "relative",
+                  }}
+                  onMouseEnter={e => {
+                    if (!active) {
+                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.05)";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text)";
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!active) {
+                      (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-muted)";
+                    }
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {/* Loading indicator */}
+          {mapLoading && (
+            <div style={{ width: 14, height: 14, flexShrink: 0 }}>
+              <svg viewBox="0 0 14 14" fill="none" style={{ animation: "spin 1s linear infinite", display: "block" }}>
+                <circle cx="7" cy="7" r="5" stroke="rgba(255,255,255,0.15)" strokeWidth="2"/>
+                <path d="M7 2 A5 5 0 0 1 12 7" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+            </div>
+          )}
+        </div>
       </header>
 
       {/* Body */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* 3D Map */}
         <div style={{ flex: "0 0 55%", position: "relative", borderRight: "1px solid var(--border)" }}>
           <SkyMap
             stars={mapStars}
@@ -82,7 +141,6 @@ export default function App() {
           />
         </div>
 
-        {/* Right panel */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ flex: 1, overflow: "hidden", padding: "12px" }}>
             <StarTable
@@ -113,6 +171,10 @@ export default function App() {
           )}
         </div>
       </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </div>
   );
 }
