@@ -37,3 +37,8 @@ export async function fetchStats(): Promise<Stats> {
   const { data } = await api.get<Stats>("/stats");
   return data;
 }
+
+export async function fetchNearest(hipId: number, n = 5): Promise<Star[]> {
+  const { data } = await api.get<Star[]>(`/stars/${hipId}/nearest`, { params: { n } });
+  return data;
+}

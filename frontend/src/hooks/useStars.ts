@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchStars, fetchStar, fetchStats } from "../api/stars";
+import { fetchStars, fetchStar, fetchStats, fetchNearest } from "../api/stars";
 
 export function useStars(
   status?: string,
@@ -29,5 +29,13 @@ export function useStats() {
   return useQuery({
     queryKey: ["stats"],
     queryFn: fetchStats,
+  });
+}
+
+export function useNearest(hipId: number | null, n = 5) {
+  return useQuery({
+    queryKey: ["nearest", hipId, n],
+    queryFn: () => fetchNearest(hipId!, n),
+    enabled: hipId !== null,
   });
 }
