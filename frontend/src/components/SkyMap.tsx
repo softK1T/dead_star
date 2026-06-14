@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import * as THREE from "three";
 import type { Star } from "../types/star";
 
+/* ─── spectral colour ─────────────────────────────────────────── */
 function spectralColor(spType: string): THREE.Color {
   const c = (spType || "").trim().toUpperCase()[0];
   if (c === "O") return new THREE.Color(0x9bb0ff);
@@ -14,10 +15,14 @@ function spectralColor(spType: string): THREE.Color {
   return new THREE.Color(0x8899bb);
 }
 
+/* ─── types ───────────────────────────────────────────────────── */
 interface P {
   SpType: string; status: string;
-  distance_ly: number; RAdeg: number; DEdeg: number; L: number;
-  HIP: number;
+  distance_ly: number; RAdeg: number; DEdeg: number;
+  L: number; M: number; HIP: number;
+  Vmag: number; M_V: number;
+  light_left_year: number; t_remaining_gyr: number;
+  t_life: number; t_age: number;
 }
 
 function parse(s: Star): P | null {
@@ -27,7 +32,11 @@ function parse(s: Star): P | null {
   return {
     SpType: String(s.SpType || ""), status: String(s.status || ""),
     distance_ly: d, RAdeg: ra, DEdeg: dec,
-    L: Number(s.L) || 1, HIP: Number(s.HIP) || 0,
+    L: Number(s.L) || 1, M: Number(s.M) || 1, HIP: Number(s.HIP) || 0,
+    Vmag: Number(s.Vmag) ?? 0, M_V: Number(s.M_V) ?? 0,
+    light_left_year: Number(s.light_left_year) || 0,
+    t_remaining_gyr: Number(s.t_remaining_gyr) || 0,
+    t_life: Number(s.t_life) || 0, t_age: Number(s.t_age) || 0,
   };
 }
 
@@ -40,6 +49,7 @@ function xyz(d: number, ra: number, dec: number) {
   );
 }
 
+/* ─── shaders ─────────────────────────────────────────────────── */
 const VERT = /* glsl */`
   attribute float aSize;
   attribute vec3  aColor;
@@ -49,7 +59,7 @@ const VERT = /* glsl */`
   void main() {
     vColor = aColor;
     vHL    = aHighlight;
-    gl_PointSize = aSize * (1.0 + aHighlight * 1.2);
+    gl_PointSize = aSize * (1.0 + aHighlight * 1.5);
     gl_Position  = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
@@ -63,18 +73,119 @@ const FRAG = /* glsl */`
     float core = exp(-d * d * 5.0);
     float halo = exp(-d * d * 1.2) * 0.45;
     float a    = clamp(core + halo, 0.0, 1.0);
-    vec3  col  = vColor + vec3(core * 0.5) + vec3(vHL * 0.4);
+    vec3  col  = vColor + vec3(core * 0.5) + vec3(vHL * 0.5);
     gl_FragColor = vec4(col, a);
   }
 `;
 
-interface Tooltip { x: number; y: number; star: P; }
+/* ─── status palette ──────────────────────────────────────────── */
+const STATUS: Record<string, { color: string; glow: string; label: string }> = {
+  "likely dead":  { color: "#f04a4a", glow: "rgba(240,74,74,0.35)",   label: "☠ Likely dead" },
+  "uncertain":    { color: "#f0b84a", glow: "rgba(240,184,74,0.30)",  label: "? Uncertain" },
+  "alive":        { color: "#4af07a", glow: "rgba(74,240,122,0.30)",  label: "✦ Alive" },
+};
+const statusMeta = (s: string) => STATUS[s] ?? { color: "#8899bb", glow: "rgba(136,153,187,0.25)", label: s };
 
+/* ─── tooltip ─────────────────────────────────────────────────── */
+interface Tooltip { x: number; y: number; star: P; visible: boolean }
+
+function StarTooltip({ tip, containerW, containerH }: { tip: Tooltip; containerW: number; containerH: number }) {
+  const sm = statusMeta(tip.star.status);
+  const PAD = 16, W = 230, H_EST = 260;
+  let left = tip.x + PAD;
+  let top  = tip.y - 20;
+  if (left + W > containerW - 8) left = tip.x - W - PAD;
+  if (top + H_EST > containerH - 8) top = containerH - H_EST - 8;
+  if (top < 8) top = 8;
+
+  const fmt = (n: number, dec = 2) => isFinite(n) ? n.toFixed(dec) : "—";
+  const fmtGyr = (g: number) => {
+    if (!isFinite(g)) return "—";
+    if (Math.abs(g) < 0.001) return "< 1 Myr";
+    if (Math.abs(g) < 1) return (g * 1000).toFixed(0) + " Myr";
+    return g.toFixed(2) + " Gyr";
+  };
+
+  const rows: [string, string][] = [
+    ["HIP",         String(tip.star.HIP || "—")],
+    ["SpType",      tip.star.SpType || "—"],
+    ["Distance",    fmt(tip.star.distance_ly, 0) + " ly"],
+    ["Visual mag",  fmt(tip.star.Vmag, 2)],
+    ["Abs mag",     fmt(tip.star.M_V, 2)],
+    ["Luminosity",  fmt(tip.star.L, 3) + " L☉"],
+    ["Mass",        fmt(tip.star.M, 2) + " M☉"],
+    ["Age",         fmtGyr(tip.star.t_age)],
+    ["Lifespan",    fmtGyr(tip.star.t_life)],
+    ["t remaining", fmtGyr(tip.star.t_remaining_gyr)],
+    ["Light left",  tip.star.light_left_year > 0 ? fmt(tip.star.light_left_year, 0) + " ly" : "—"],
+  ];
+
+  return (
+    <div style={{
+      position: "absolute",
+      left, top,
+      width: W,
+      background: "rgba(6,7,20,0.96)",
+      border: `1px solid ${sm.color}55`,
+      borderRadius: 10,
+      padding: "12px 14px",
+      fontSize: 12,
+      color: "#c8cfe8",
+      lineHeight: 1.65,
+      pointerEvents: "none",
+      zIndex: 50,
+      backdropFilter: "blur(14px)",
+      boxShadow: `0 0 28px ${sm.glow}, 0 4px 32px rgba(0,0,0,0.6)`,
+      transition: "opacity 0.15s ease",
+      opacity: tip.visible ? 1 : 0,
+    }}>
+      {/* header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, paddingBottom: 8, borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
+        {/* star glyph */}
+        <div style={{
+          width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+          background: `radial-gradient(circle at 40% 35%, white 0%, ${sm.color} 45%, transparent 100%)`,
+          boxShadow: `0 0 10px ${sm.color}88`,
+        }} />
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "#e8ecf8", letterSpacing: "0.03em" }}>
+            {tip.star.SpType || "?"}-type star
+          </div>
+          <div style={{ fontSize: 11, color: sm.color, fontWeight: 600, marginTop: 1 }}>
+            {sm.label}
+          </div>
+        </div>
+      </div>
+
+      {/* data rows */}
+      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", rowGap: 2, columnGap: 12 }}>
+        {rows.map(([k, v]) => (
+          <> 
+            <span key={k + "_k"} style={{ color: "#5a6282", fontVariantNumeric: "tabular-nums" }}>{k}</span>
+            <span key={k + "_v"} style={{
+              color: k === "t remaining" && tip.star.t_remaining_gyr < 0 ? "#f04a4a" :
+                     k === "t remaining" && tip.star.t_remaining_gyr < 0.5 ? "#f0b84a" : "#c8cfe8",
+              fontVariantNumeric: "tabular-nums",
+            }}>{v}</span>
+          </>
+        ))}
+      </div>
+
+      {/* footer hint */}
+      <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.07)", fontSize: 10, color: "#3d4460" }}>
+        Click to select · HIP {tip.star.HIP}
+      </div>
+    </div>
+  );
+}
+
+/* ─── main component ──────────────────────────────────────────── */
 export default function SkyMap({ stars }: { stars: Star[] }) {
-  const mountRef    = useRef<HTMLDivElement>(null);
-  const cleanupRef  = useRef<(() => void) | null>(null);
-  const hlRef       = useRef<THREE.BufferAttribute | null>(null);
-  const parsedRef   = useRef<P[]>([]);
+  const mountRef   = useRef<HTMLDivElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const hlRef      = useRef<THREE.BufferAttribute | null>(null);
+  const parsedRef  = useRef<P[]>([]);
+  const sizeRef    = useRef({ w: 800, h: 600 });
   const [tooltip, setTooltip] = useState<Tooltip | null>(null);
 
   const parsed = useMemo(() => {
@@ -82,38 +193,45 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     return stars.map(parse).filter((s): s is P => s !== null);
   }, [stars]);
 
-  // hover handler — defined once, reads parsedRef
+  /* throttle mousemove to avoid raycaster bottleneck */
+  const lastMoveRef = useRef(0);
   const handleMouseMove = useCallback((e: MouseEvent, renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera, geo: THREE.BufferGeometry, el: HTMLDivElement) => {
+    const now = Date.now();
+    if (now - lastMoveRef.current < 30) return; // ~33fps cap
+    lastMoveRef.current = now;
+
     const rect = el.getBoundingClientRect();
     const mx   = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
     const my   = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
 
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
-    raycaster.params.Points!.threshold = 80; // world units hit area
+    // scale threshold with camera distance
+    const camDist = camera.position.length();
+    raycaster.params.Points!.threshold = Math.max(20, camDist * 0.04);
 
     const pts = new THREE.Points(geo);
     const hits = raycaster.intersectObject(pts);
-
     const hlAttr = hlRef.current;
     if (!hlAttr) return;
 
-    // reset all
     for (let i = 0; i < hlAttr.count; i++) hlAttr.setX(i, 0);
 
     if (hits.length > 0) {
       const idx = hits[0].index!;
       hlAttr.setX(idx, 1);
-      setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star: parsedRef.current[idx] });
+      hlAttr.needsUpdate = true;
+      const star = parsedRef.current[idx];
+      if (star) {
+        setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star, visible: true });
+      }
     } else {
+      hlAttr.needsUpdate = true;
       setTooltip(null);
     }
-    hlAttr.needsUpdate = true;
   }, []);
 
-  useEffect(() => {
-    parsedRef.current = parsed;
-  }, [parsed]);
+  useEffect(() => { parsedRef.current = parsed; }, [parsed]);
 
   useEffect(() => {
     const el = mountRef.current;
@@ -122,6 +240,8 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     cleanupRef.current = null;
 
     const W = el.clientWidth || 800, H = el.clientHeight || 600;
+    sizeRef.current = { w: W, h: H };
+
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(W, H);
@@ -140,7 +260,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     camera.position.set(center.x, center.y, center.z + radius * 1.4);
     camera.lookAt(center);
 
-    // background
+    // background stars
     const bgPos = new Float32Array(10_000 * 3);
     for (let i = 0; i < 10_000; i++) {
       bgPos[i*3]   = center.x + (Math.random() - 0.5) * radius * 5;
@@ -151,12 +271,12 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     bgGeo.setAttribute("position", new THREE.BufferAttribute(bgPos, 3));
     scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ color: 0x1a2a44, size: 1.0, sizeAttenuation: false })));
 
-    // stars
+    // data stars
     const n   = parsed.length;
     const pos = new Float32Array(n * 3);
     const col = new Float32Array(n * 3);
     const siz = new Float32Array(n);
-    const hl  = new Float32Array(n); // highlight
+    const hl  = new Float32Array(n);
 
     for (let i = 0; i < n; i++) {
       const s = parsed[i], v = positions[i];
@@ -183,7 +303,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       blending: THREE.AdditiveBlending,
     })));
 
-    // Sun
+    // Sun sprite
     const sc = document.createElement("canvas"); sc.width = sc.height = 128;
     const ctx = sc.getContext("2d")!;
     const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -204,7 +324,10 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     window.addEventListener("keydown", onKD);
     window.addEventListener("keyup",   onKU);
     renderer.domElement.addEventListener("click", () => renderer.domElement.requestPointerLock());
-    const onLC = () => { locked = document.pointerLockElement === renderer.domElement; };
+    const onLC = () => {
+      locked = document.pointerLockElement === renderer.domElement;
+      if (locked) setTooltip(null);
+    };
     const onMM = (e: MouseEvent) => {
       if (locked) {
         euler.y -= e.movementX * 0.002;
@@ -224,6 +347,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
 
     const obs = new ResizeObserver(() => {
       const w = el.clientWidth, h = el.clientHeight;
+      sizeRef.current = { w, h };
       camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
     });
     obs.observe(el);
@@ -259,47 +383,36 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
 
   useEffect(() => () => { cleanupRef.current?.(); }, []);
 
-  const statusColor = (s: string) =>
-    s === "likely dead" ? "#f04a4a" : s === "uncertain" ? "#f0b84a" : "#4af07a";
-
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
+      <div ref={mountRef} style={{ width: "100%", height: "100%", cursor: tooltip ? "crosshair" : "default" }} />
 
-      {/* Hover tooltip */}
       {tooltip && (
-        <div style={{
-          position: "absolute",
-          left: tooltip.x + 16,
-          top:  tooltip.y - 10,
-          background: "rgba(4,5,15,0.95)",
-          border: `1px solid ${statusColor(tooltip.star.status)}44`,
-          borderRadius: 8,
-          padding: "10px 14px",
-          fontSize: 12,
-          color: "#c8cfe8",
-          lineHeight: 1.8,
-          pointerEvents: "none",
-          zIndex: 50,
-          backdropFilter: "blur(8px)",
-          minWidth: 180,
-          boxShadow: `0 0 20px ${statusColor(tooltip.star.status)}22`,
-        }}>
-          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4, color: "#e8ecf8" }}>
-            HIP {tooltip.star.HIP}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "0 12px" }}>
-            <span style={{ color: "#7a82a6" }}>Type</span>     <span>{tooltip.star.SpType || "—"}</span>
-            <span style={{ color: "#7a82a6" }}>Distance</span> <span>{tooltip.star.distance_ly.toFixed(0)} ly</span>
-            <span style={{ color: "#7a82a6" }}>Luminosity</span><span>{tooltip.star.L.toFixed(2)} L☉</span>
-            <span style={{ color: "#7a82a6" }}>Status</span>
-            <span style={{ color: statusColor(tooltip.star.status), fontWeight: 600 }}>
-              {tooltip.star.status}
-            </span>
-          </div>
-        </div>
+        <StarTooltip
+          tip={tooltip}
+          containerW={sizeRef.current.w}
+          containerH={sizeRef.current.h}
+        />
       )}
 
+      {/* Legend */}
+      <div style={{ ...panel, top: 14, left: 14 }}>
+        {(["likely dead", "uncertain", "alive"] as const).map(s => {
+          const m = statusMeta(s);
+          return (
+            <div key={s} style={{ display: "flex", alignItems: "center", gap: 7, lineHeight: 2 }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, boxShadow: `0 0 5px ${m.color}`, flexShrink: 0, display: "inline-block" }} />
+              <span style={{ color: "#7a82a6" }}>{s}</span>
+            </div>
+          );
+        })}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, lineHeight: 2 }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fde98a", boxShadow: "0 0 5px #fde98a", flexShrink: 0, display: "inline-block" }} />
+          <span style={{ color: "#7a82a6" }}>Sun</span>
+        </div>
+      </div>
+
+      {/* Navigation hint */}
       <div style={{ ...panel, bottom: 14, left: 14 }}>
         <div style={{ color: "#7a82a6", fontWeight: 600, marginBottom: 3 }}>NAVIGATION</div>
         <div>Click → capture mouse</div>
@@ -308,20 +421,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         <div>E / Q — up / down</div>
         <div>Scroll — speed</div>
         <div>Esc — release</div>
-      </div>
-
-      <div style={{ ...panel, top: 14, left: 14, color: "#7a82a6" }}>
-        {([
-          ["#f04a4a", "likely dead"],
-          ["#f0b84a", "uncertain"],
-          ["#4af07a", "alive"],
-          ["#fde98a", "Sun"],
-        ] as [string, string][]).map(([c, l]) => (
-          <div key={l} style={{ display: "flex", alignItems: "center", gap: 7, lineHeight: 2 }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: c, boxShadow: `0 0 5px ${c}`, flexShrink: 0, display: "inline-block" }} />
-            {l}
-          </div>
-        ))}
       </div>
     </div>
   );
