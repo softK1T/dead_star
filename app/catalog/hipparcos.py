@@ -5,12 +5,12 @@ import pandas as pd
 class HipparcosLoader:
     COLUMNS = ["HIP", "_RAJ2000", "_DEJ2000", "Plx", "e_Plx", "SpType", "Vmag", "B-V", "F2"]
 
-    def __init__(self, row_limit: int = 10000):
+    def __init__(self, row_limit: int = -1):
         self.row_limit = row_limit
 
     def load(self) -> pd.DataFrame:
         v = Vizier(columns=self.COLUMNS)
-        v.ROW_LIMIT = self.row_limit
+        v.ROW_LIMIT = self.row_limit  # -1 = все записи каталога
         result = v.get_catalogs("I/239/hip_main")
         return self._clean(result[0].to_pandas())
 

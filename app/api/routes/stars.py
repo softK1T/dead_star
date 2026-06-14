@@ -15,7 +15,7 @@ async def get_stars(
     status: str | None = Query(None),
     search: str | None = Query(None),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=5000),  # до 5000 за раз
 ):
     df = request.app.state.df
 
