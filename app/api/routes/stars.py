@@ -29,9 +29,10 @@ async def get_stars(
     total = len(df)
 
     if map_mode:
-        # Return ALL stars for the 3D map — no sampling
-        rows = df[COLUMNS].fillna(value="").to_dict(orient="records")
-        return {"data": rows, "total": total, "page": 1, "limit": total}
+        # Respect limit; sample evenly across distance so sky looks uniform
+        sample = df if limit >= total else df.iloc[::max(1, total // limit)].head(limit)
+        rows = sample[COLUMNS].fillna(value="").to_dict(orient="records")
+        return {"data": rows, "total": total, "page": 1, "limit": len(rows)}
 
     start = (page - 1) * limit
     end = start + limit
