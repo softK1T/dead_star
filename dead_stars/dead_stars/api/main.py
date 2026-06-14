@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,12 +10,14 @@ from dead_stars.classifier import StarStatusClassifier
 from dead_stars.isochrones import IsochroneAgeEstimator
 from dead_stars.physics import StellarPhysics
 
+ISO_PATH = Path(__file__).resolve().parent.parent.parent.parent / "iso.csv"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     df = HipparcosLoader(row_limit=10000).load()
     df = StellarPhysics().enrich(df)
-    df = IsochroneAgeEstimator("iso.csv").apply(df)
+    df = IsochroneAgeEstimator(str(ISO_PATH)).apply(df)
     df = StarStatusClassifier().classify(df)
     app.state.df = df
     yield
