@@ -41,17 +41,13 @@ function xyz(d: number, ra: number, dec: number) {
   );
 }
 
-/*
-  Strategy: aSize is already in PIXELS (computed in JS based on luminosity).
-  In the vertex shader we just scale by distance so that near stars get bigger
-  and far stars shrink — but we set a generous minimum (2px) so they're always visible.
-  Halo is moderate; only the very brightest stars bloom noticeably.
-*/
+// uRefDist = 500 ly: stars at 500ly appear at their base pixel size;
+// closer stars grow (up to 4x), farther shrink (down to 0.3x, floor 1.5px).
 const VERT = /* glsl */`
-  attribute float aSize;      // base px size at reference distance
+  attribute float aSize;
   attribute vec3  aColor;
   attribute float aHighlight;
-  uniform   float uRefDist;   // reference camera distance for calibration
+  uniform   float uRefDist;
   varying   vec3  vColor;
   varying   float vHL;
   varying   float vBrightness;
@@ -59,20 +55,13 @@ const VERT = /* glsl */`
   void main() {
     vColor = aColor;
     vHL    = aHighlight;
-
-    vec4  mvPos   = modelViewMatrix * vec4(position, 1.0);
-    float dist    = -mvPos.z;
-
-    // scale so size stays roughly constant at reference distance,
-    // shrinks at 2x distance, grows at 0.5x — but clamped
-    float scale   = uRefDist / max(dist, 1.0);
-    float px      = aSize * clamp(scale, 0.25, 4.0);
-    gl_PointSize  = clamp(px, 2.0, 22.0) * (1.0 + aHighlight * 1.6);
-
-    // brightness fades gracefully when star becomes tiny
-    vBrightness = clamp(px / 4.0, 0.3, 1.0);
-
-    gl_Position = projectionMatrix * mvPos;
+    vec4  mvPos = modelViewMatrix * vec4(position, 1.0);
+    float dist  = max(-mvPos.z, 0.1);
+    float scale = uRefDist / dist;
+    float px    = aSize * clamp(scale, 0.3, 5.0);
+    gl_PointSize  = clamp(px, 1.5, 24.0) * (1.0 + aHighlight * 1.8);
+    vBrightness   = clamp(px / 3.5, 0.25, 1.0);
+    gl_Position   = projectionMatrix * mvPos;
   }
 `;
 
@@ -82,17 +71,14 @@ const FRAG = /* glsl */`
   varying float vBrightness;
 
   void main() {
-    vec2  uv   = gl_PointCoord - 0.5;
-    float d    = length(uv) * 2.0;
+    vec2  uv = gl_PointCoord - 0.5;
+    float d  = length(uv) * 2.0;
     if (d > 1.0) discard;
-
-    float core = exp(-d * d * 9.0);          // tight bright centre
-    float glow = exp(-d * d * 2.5) * 0.35;  // soft glow ring
+    float core = exp(-d * d * 9.0);
+    float glow = exp(-d * d * 2.5) * 0.30;
     float a    = (core + glow) * vBrightness;
-
-    vec3 col = mix(vColor, vec3(1.0), core * 0.4);  // core bleaches toward white
+    vec3 col   = mix(vColor, vec3(1.0), core * 0.38);
     col += vec3(vHL * 0.5) * core;
-
     gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
   }
 `;
@@ -132,13 +118,13 @@ function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, boxShadow: `0 0 6px ${color}`, flexShrink: 0, display: "inline-block" }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e6f5", letterSpacing: "0.02em" }}>HIP {tip.star.HIP}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e6f5", letterSpacing: "0.02em" }}>HIP\u00a0{tip.star.HIP}</span>
         <span style={{ marginLeft: "auto", fontSize: 11, color, fontWeight: 500 }}>{tip.star.SpType || "—"}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 4px", textAlign: "center" }}>
         {([
-          ["dist", tip.star.distance_ly.toFixed(0) + " ly", "#c8cfe8"],
-          ["lum",  tip.star.L.toFixed(1) + " L☉", "#c8cfe8"],
+          ["dist", tip.star.distance_ly.toFixed(0) + "\u00a0ly", "#c8cfe8"],
+          ["lum",  tip.star.L.toFixed(1) + "\u00a0L\u2609", "#c8cfe8"],
           ["left", tremStr, tremColor],
         ] as [string, string, string][]).map(([k, v, vc]) => (
           <div key={k}>
@@ -152,11 +138,11 @@ function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
 }
 
 export default function SkyMap({ stars }: { stars: Star[] }) {
-  const mountRef    = useRef<HTMLDivElement>(null);
-  const cleanupRef  = useRef<(() => void) | null>(null);
-  const hlRef       = useRef<THREE.BufferAttribute | null>(null);
-  const parsedRef   = useRef<P[]>([]);
-  const sizeRef     = useRef({ w: 800, h: 600 });
+  const mountRef   = useRef<HTMLDivElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
+  const hlRef      = useRef<THREE.BufferAttribute | null>(null);
+  const parsedRef  = useRef<P[]>([]);
+  const sizeRef    = useRef({ w: 800, h: 600 });
   const [tooltip, setTooltip] = useState<Tip | null>(null);
   const lastMoveRef = useRef(0);
 
@@ -167,7 +153,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
 
   const handleMouseMove = useCallback((
     e: MouseEvent,
-    renderer: THREE.WebGLRenderer,
+    _renderer: THREE.WebGLRenderer,
     camera: THREE.PerspectiveCamera,
     geo: THREE.BufferGeometry,
     el: HTMLDivElement,
@@ -180,8 +166,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const my = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
-    raycaster.params.Points!.threshold = Math.max(20, camera.position.length() * 0.04);
-    const hits = raycaster.intersectObject(new THREE.Points(geo));
+    raycaster.params.Points!.threshold = Math.max(10, camera.position.length() * 0.02);
+    const pts = new THREE.Points(geo);
+    const hits = raycaster.intersectObject(pts);
     const hlAttr = hlRef.current;
     if (!hlAttr) return;
     for (let i = 0; i < hlAttr.count; i++) hlAttr.setX(i, 0);
@@ -210,36 +197,45 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(W, H);
-    renderer.setClearColor(0x04050f, 1);
+    renderer.setClearColor(0x03040e, 1);
     el.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-    const positions = parsed.map(s => xyz(s.distance_ly, s.RAdeg, s.DEdeg));
-    const box = new THREE.Box3();
-    positions.forEach(p => box.expandByPoint(p));
-    const center = new THREE.Vector3(), bsz = new THREE.Vector3();
-    box.getCenter(center); box.getSize(bsz);
-    const radius = Math.max(bsz.length() * 0.55, 10);
 
-    const camera = new THREE.PerspectiveCamera(70, W / H, 1, radius * 15);
-    const initDist = radius * 1.4;
-    camera.position.set(center.x, center.y, center.z + initDist);
-    camera.lookAt(center);
+    // Far plane: max distance in dataset + generous margin
+    const maxDist = parsed.reduce((m, s) => Math.max(m, s.distance_ly), 0);
+    const FAR = Math.max(maxDist * 2.5, 200_000);
+    const NEAR = 0.5; // half a light year — fine grained near clipping
 
-    // background dust
-    const bgPos = new Float32Array(8_000 * 3);
-    for (let i = 0; i < 8_000; i++) {
-      bgPos[i*3]   = center.x + (Math.random() - 0.5) * radius * 6;
-      bgPos[i*3+1] = center.y + (Math.random() - 0.5) * radius * 6;
-      bgPos[i*3+2] = center.z + (Math.random() - 0.5) * radius * 6;
+    // Camera starts at the Sun (origin), looking toward galactic center (RA≈266°, Dec≈-29°)
+    const camera = new THREE.PerspectiveCamera(60, W / H, NEAR, FAR);
+    camera.position.set(0, 0, 0);
+    // look toward RA=266 Dec=-29 (approx galactic center direction)
+    const gcRA = (266 * Math.PI) / 180, gcDec = (-29 * Math.PI) / 180;
+    const gcDir = new THREE.Vector3(
+      Math.cos(gcDec) * Math.cos(gcRA),
+      Math.sin(gcDec),
+      -Math.cos(gcDec) * Math.sin(gcRA),
+    );
+    camera.lookAt(gcDir.multiplyScalar(1000));
+
+    // Background dust cloud
+    const bgPos = new Float32Array(12_000 * 3);
+    for (let i = 0; i < 12_000; i++) {
+      const d = Math.random() * FAR * 0.6;
+      const ra = Math.random() * Math.PI * 2;
+      const dec = (Math.random() - 0.5) * Math.PI;
+      bgPos[i*3]   = d * Math.cos(dec) * Math.cos(ra);
+      bgPos[i*3+1] = d * Math.sin(dec);
+      bgPos[i*3+2] = -d * Math.cos(dec) * Math.sin(ra);
     }
     const bgGeo = new THREE.BufferGeometry();
     bgGeo.setAttribute("position", new THREE.BufferAttribute(bgPos, 3));
     scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({
-      color: 0x263556, size: 0.8, sizeAttenuation: false, transparent: true, opacity: 0.5,
+      color: 0x1a2840, size: 0.7, sizeAttenuation: false, transparent: true, opacity: 0.45,
     })));
 
-    // data stars  (+1 for Sun)
+    // Build star geometry: all parsed stars + Sun at index n
     const n   = parsed.length;
     const pos = new Float32Array((n + 1) * 3);
     const col = new Float32Array((n + 1) * 3);
@@ -247,19 +243,20 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const hl  = new Float32Array(n + 1);
 
     for (let i = 0; i < n; i++) {
-      const s = parsed[i], v = positions[i];
+      const s = parsed[i];
+      const v = xyz(s.distance_ly, s.RAdeg, s.DEdeg);
       pos[i*3] = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
       const c = spectralColor(s.SpType);
       col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
-      // pixel size at reference distance: 3..14px based on log-luminosity
       const lum  = s.L > 0 ? Math.log10(s.L + 1) : 0;
-      const base = 3 + lum * 3.5;   // dim=3px, Sun-like=~5px, very bright=~14px
-      siz[i] = s.status === "likely dead" ? Math.min(base * 1.4, 14) : Math.min(base, 14);
+      // base pixel size calibrated at uRefDist=500ly: 2px dim, ~5px solar-type, 12px very bright
+      const base = 2 + lum * 3.2;
+      siz[i] = s.status === "likely dead" ? Math.min(base * 1.35, 12) : Math.min(base, 12);
     }
-    // Sun
+    // Sun — sits at origin, rendered same as any G2 star
     pos[n*3] = 0; pos[n*3+1] = 0; pos[n*3+2] = 0;
     col[n*3] = 1.0; col[n*3+1] = 0.94; col[n*3+2] = 0.55;
-    siz[n] = 6; // slightly brighter than average, not dominant
+    siz[n] = 5;
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position",   new THREE.BufferAttribute(pos, 3));
@@ -270,40 +267,43 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     geo.setAttribute("aHighlight", hlAttr);
     hlRef.current = hlAttr;
 
+    // uRefDist = 500 ly (fixed) — star at 500ly shows at its base aSize
+    const REF_DIST = 500;
     const mat = new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: FRAG,
       transparent: true, depthWrite: false,
       blending: THREE.AdditiveBlending,
-      uniforms: { uRefDist: { value: initDist } },
+      uniforms: { uRefDist: { value: REF_DIST } },
     });
     scene.add(new THREE.Points(geo, mat));
 
-    // controls
+    // Flight controls
     const keys: Record<string, boolean> = {};
     const euler = new THREE.Euler(0, 0, 0, "YXZ");
     let locked = false;
     euler.setFromQuaternion(camera.quaternion);
-    const onKD = (e: KeyboardEvent) => { keys[e.code] = true; };
-    const onKU = (e: KeyboardEvent) => { keys[e.code] = false; };
+    const onKD = (ev: KeyboardEvent) => { keys[ev.code] = true; };
+    const onKU = (ev: KeyboardEvent) => { keys[ev.code] = false; };
     window.addEventListener("keydown", onKD);
     window.addEventListener("keyup",   onKU);
     renderer.domElement.addEventListener("click", () => renderer.domElement.requestPointerLock());
     const onLC = () => { locked = document.pointerLockElement === renderer.domElement; if (locked) setTooltip(null); };
-    const onMM = (e: MouseEvent) => {
+    const onMM = (ev: MouseEvent) => {
       if (locked) {
-        euler.y -= e.movementX * 0.002;
-        euler.x  = Math.max(-1.5, Math.min(1.5, euler.x - e.movementY * 0.002));
+        euler.y -= ev.movementX * 0.002;
+        euler.x  = Math.max(-1.5, Math.min(1.5, euler.x - ev.movementY * 0.002));
         camera.quaternion.setFromEuler(euler);
       } else {
-        handleMouseMove(e, renderer, camera, geo, el);
+        handleMouseMove(ev, renderer, camera, geo, el);
       }
     };
     document.addEventListener("pointerlockchange", onLC);
     document.addEventListener("mousemove", onMM);
 
-    let speed = radius * 0.3;
+    // Speed: starts at 50 ly/s, scroll to adjust
+    let speed = 50;
     el.addEventListener("wheel", (ev: WheelEvent) => {
-      speed = Math.max(1, Math.min(radius * 8, speed * (ev.deltaY > 0 ? 0.85 : 1.18)));
+      speed = Math.max(0.5, Math.min(50_000, speed * (ev.deltaY > 0 ? 0.82 : 1.22)));
     }, { passive: true });
 
     const obs = new ResizeObserver(() => {
@@ -318,7 +318,8 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     let animId = 0;
     const tick = () => {
       animId = requestAnimationFrame(tick);
-      const spd = speed * Math.min(clock.getDelta(), 0.05);
+      const dt = Math.min(clock.getDelta(), 0.05);
+      const spd = speed * dt;
       camera.getWorldDirection(fwd);
       right.crossVectors(fwd, camera.up).normalize();
       if (keys["KeyW"] || keys["ArrowUp"])    camera.position.addScaledVector(fwd,    spd);
@@ -327,9 +328,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       if (keys["KeyA"] || keys["ArrowLeft"])  camera.position.addScaledVector(right, -spd);
       if (keys["KeyE"] || keys["Space"])      camera.position.y += spd;
       if (keys["KeyQ"] || keys["ShiftLeft"])  camera.position.y -= spd;
-      // update reference distance uniform so shader scales correctly as you fly
-      const camDist = camera.position.distanceTo(center);
-      mat.uniforms.uRefDist.value = camDist;
       renderer.render(scene, camera);
     };
     tick();
@@ -362,15 +360,15 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         ))}
         <div style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: 2 }}>
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#fde98a", boxShadow: "0 0 4px #fde98a", display: "inline-block", flexShrink: 0 }} />
-          <span style={{ color: "#6a7296" }}>Sun</span>
+          <span style={{ color: "#6a7296" }}>Sun (you)</span>
         </div>
       </div>
 
       <div style={{ ...panel, bottom: 14, left: 14 }}>
         <div style={{ color: "#6a7296", fontWeight: 600, marginBottom: 2 }}>NAVIGATION</div>
-        {([["W/S","forward/back"],["A/D","strafe"],["E/Q","up/down"],["Scroll","speed"],["Click","capture"],["Esc","release"]] as [string,string][]).map(([k,v]) => (
+        {([["W/S","forward/back"],["A/D","strafe"],["E/Q","up/down"],["Scroll","speed"],["Click","capture mouse"],["Esc","release"]] as [string,string][]).map(([k,v]) => (
           <div key={k} style={{ display: "flex", gap: 6 }}>
-            <span style={{ color: "#4a5278", minWidth: 36, fontWeight: 600 }}>{k}</span>
+            <span style={{ color: "#4a5278", minWidth: 48, fontWeight: 600 }}>{k}</span>
             <span style={{ color: "#3d4460" }}>{v}</span>
           </div>
         ))}
