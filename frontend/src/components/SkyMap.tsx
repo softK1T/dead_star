@@ -2,7 +2,6 @@ import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import * as THREE from "three";
 import type { Star } from "../types/star";
 
-/* ─── spectral colour ─────────────────────────────────────────── */
 function spectralColor(spType: string): THREE.Color {
   const c = (spType || "").trim().toUpperCase()[0];
   if (c === "O") return new THREE.Color(0x9bb0ff);
@@ -15,14 +14,10 @@ function spectralColor(spType: string): THREE.Color {
   return new THREE.Color(0x8899bb);
 }
 
-/* ─── types ───────────────────────────────────────────────────── */
 interface P {
   SpType: string; status: string;
   distance_ly: number; RAdeg: number; DEdeg: number;
-  L: number; M: number; HIP: number;
-  Vmag: number; M_V: number;
-  light_left_year: number; t_remaining_gyr: number;
-  t_life: number; t_age: number;
+  L: number; HIP: number; t_remaining_gyr: number;
 }
 
 function parse(s: Star): P | null {
@@ -32,11 +27,8 @@ function parse(s: Star): P | null {
   return {
     SpType: String(s.SpType || ""), status: String(s.status || ""),
     distance_ly: d, RAdeg: ra, DEdeg: dec,
-    L: Number(s.L) || 1, M: Number(s.M) || 1, HIP: Number(s.HIP) || 0,
-    Vmag: Number(s.Vmag) ?? 0, M_V: Number(s.M_V) ?? 0,
-    light_left_year: Number(s.light_left_year) || 0,
+    L: Number(s.L) || 1, HIP: Number(s.HIP) || 0,
     t_remaining_gyr: Number(s.t_remaining_gyr) || 0,
-    t_life: Number(s.t_life) || 0, t_age: Number(s.t_age) || 0,
   };
 }
 
@@ -49,7 +41,6 @@ function xyz(d: number, ra: number, dec: number) {
   );
 }
 
-/* ─── shaders ─────────────────────────────────────────────────── */
 const VERT = /* glsl */`
   attribute float aSize;
   attribute vec3  aColor;
@@ -67,8 +58,8 @@ const FRAG = /* glsl */`
   varying vec3  vColor;
   varying float vHL;
   void main() {
-    vec2  uv   = gl_PointCoord - 0.5;
-    float d    = length(uv) * 2.0;
+    vec2  uv = gl_PointCoord - 0.5;
+    float d  = length(uv) * 2.0;
     if (d > 1.0) discard;
     float core = exp(-d * d * 5.0);
     float halo = exp(-d * d * 1.2) * 0.45;
@@ -78,157 +69,112 @@ const FRAG = /* glsl */`
   }
 `;
 
-/* ─── status palette ──────────────────────────────────────────── */
-const STATUS: Record<string, { color: string; glow: string; label: string }> = {
-  "likely dead":  { color: "#f04a4a", glow: "rgba(240,74,74,0.35)",   label: "☠ Likely dead" },
-  "uncertain":    { color: "#f0b84a", glow: "rgba(240,184,74,0.30)",  label: "? Uncertain" },
-  "alive":        { color: "#4af07a", glow: "rgba(74,240,122,0.30)",  label: "✦ Alive" },
+const STATUS_COLOR: Record<string, string> = {
+  "likely dead": "#f04a4a",
+  "uncertain":   "#f0b84a",
+  "alive":       "#4af07a",
 };
-const statusMeta = (s: string) => STATUS[s] ?? { color: "#8899bb", glow: "rgba(136,153,187,0.25)", label: s };
 
-/* ─── tooltip ─────────────────────────────────────────────────── */
-interface Tooltip { x: number; y: number; star: P; visible: boolean }
+interface Tip { x: number; y: number; star: P; }
 
-function StarTooltip({ tip, containerW, containerH }: { tip: Tooltip; containerW: number; containerH: number }) {
-  const sm = statusMeta(tip.star.status);
-  const PAD = 16, W = 230, H_EST = 260;
+function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
+  const color = STATUS_COLOR[tip.star.status] ?? "#8899bb";
+  const W = 180, H = 90, PAD = 14;
   let left = tip.x + PAD;
-  let top  = tip.y - 20;
-  if (left + W > containerW - 8) left = tip.x - W - PAD;
-  if (top + H_EST > containerH - 8) top = containerH - H_EST - 8;
-  if (top < 8) top = 8;
+  let top  = tip.y - H / 2;
+  if (left + W > cw - 6) left = tip.x - W - PAD;
+  if (top < 6) top = 6;
+  if (top + H > ch - 6) top = ch - H - 6;
 
-  const fmt = (n: number, dec = 2) => isFinite(n) ? n.toFixed(dec) : "—";
-  const fmtGyr = (g: number) => {
-    if (!isFinite(g)) return "—";
-    if (Math.abs(g) < 0.001) return "< 1 Myr";
-    if (Math.abs(g) < 1) return (g * 1000).toFixed(0) + " Myr";
-    return g.toFixed(2) + " Gyr";
-  };
-
-  const rows: [string, string][] = [
-    ["HIP",         String(tip.star.HIP || "—")],
-    ["SpType",      tip.star.SpType || "—"],
-    ["Distance",    fmt(tip.star.distance_ly, 0) + " ly"],
-    ["Visual mag",  fmt(tip.star.Vmag, 2)],
-    ["Abs mag",     fmt(tip.star.M_V, 2)],
-    ["Luminosity",  fmt(tip.star.L, 3) + " L☉"],
-    ["Mass",        fmt(tip.star.M, 2) + " M☉"],
-    ["Age",         fmtGyr(tip.star.t_age)],
-    ["Lifespan",    fmtGyr(tip.star.t_life)],
-    ["t remaining", fmtGyr(tip.star.t_remaining_gyr)],
-    ["Light left",  tip.star.light_left_year > 0 ? fmt(tip.star.light_left_year, 0) + " ly" : "—"],
-  ];
+  const trem = tip.star.t_remaining_gyr;
+  const tremStr = !isFinite(trem) ? "—"
+    : Math.abs(trem) < 0.001 ? "< 1 Myr"
+    : Math.abs(trem) < 1 ? (trem * 1000).toFixed(0) + " Myr"
+    : trem.toFixed(1) + " Gyr";
+  const tremColor = trem < 0 ? "#f04a4a" : trem < 0.5 ? "#f0b84a" : "#c8cfe8";
 
   return (
     <div style={{
-      position: "absolute",
-      left, top,
-      width: W,
-      background: "rgba(6,7,20,0.96)",
-      border: `1px solid ${sm.color}55`,
-      borderRadius: 10,
-      padding: "12px 14px",
-      fontSize: 12,
-      color: "#c8cfe8",
-      lineHeight: 1.65,
+      position: "absolute", left, top, width: W,
+      background: "rgba(5,6,18,0.92)",
+      border: `1px solid ${color}44`,
+      borderRadius: 8,
+      padding: "10px 12px",
       pointerEvents: "none",
       zIndex: 50,
-      backdropFilter: "blur(14px)",
-      boxShadow: `0 0 28px ${sm.glow}, 0 4px 32px rgba(0,0,0,0.6)`,
-      transition: "opacity 0.15s ease",
-      opacity: tip.visible ? 1 : 0,
+      backdropFilter: "blur(12px)",
+      boxShadow: `0 0 20px ${color}22, 0 4px 24px rgba(0,0,0,0.5)`,
+      fontFamily: "inherit",
     }}>
-      {/* header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, paddingBottom: 8, borderBottom: `1px solid rgba(255,255,255,0.07)` }}>
-        {/* star glyph */}
-        <div style={{
-          width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-          background: `radial-gradient(circle at 40% 35%, white 0%, ${sm.color} 45%, transparent 100%)`,
-          boxShadow: `0 0 10px ${sm.color}88`,
-        }} />
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 14, color: "#e8ecf8", letterSpacing: "0.03em" }}>
-            {tip.star.SpType || "?"}-type star
-          </div>
-          <div style={{ fontSize: 11, color: sm.color, fontWeight: 600, marginTop: 1 }}>
-            {sm.label}
-          </div>
-        </div>
+      {/* name + status dot */}
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, boxShadow: `0 0 6px ${color}`, flexShrink: 0, display: "inline-block" }} />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e6f5", letterSpacing: "0.02em" }}>
+          HIP {tip.star.HIP}
+        </span>
+        <span style={{ marginLeft: "auto", fontSize: 11, color, fontWeight: 500 }}>
+          {tip.star.SpType || "—"}
+        </span>
       </div>
 
-      {/* data rows */}
-      <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", rowGap: 2, columnGap: 12 }}>
-        {rows.map(([k, v]) => (
-          <> 
-            <span key={k + "_k"} style={{ color: "#5a6282", fontVariantNumeric: "tabular-nums" }}>{k}</span>
-            <span key={k + "_v"} style={{
-              color: k === "t remaining" && tip.star.t_remaining_gyr < 0 ? "#f04a4a" :
-                     k === "t remaining" && tip.star.t_remaining_gyr < 0.5 ? "#f0b84a" : "#c8cfe8",
-              fontVariantNumeric: "tabular-nums",
-            }}>{v}</span>
-          </>
+      {/* 3 key facts */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 4px", textAlign: "center" }}>
+        {([
+          ["dist", tip.star.distance_ly.toFixed(0) + "\u00a0ly", "#c8cfe8"],
+          ["lum",  tip.star.L.toFixed(1) + "\u00a0L☉", "#c8cfe8"],
+          ["left", tremStr, tremColor],
+        ] as [string, string, string][]).map(([k, v, vc]) => (
+          <div key={k}>
+            <div style={{ fontSize: 9, color: "#3d4460", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>{k}</div>
+            <div style={{ fontSize: 12, color: vc, fontVariantNumeric: "tabular-nums", fontWeight: 500 }}>{v}</div>
+          </div>
         ))}
-      </div>
-
-      {/* footer hint */}
-      <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.07)", fontSize: 10, color: "#3d4460" }}>
-        Click to select · HIP {tip.star.HIP}
       </div>
     </div>
   );
 }
 
-/* ─── main component ──────────────────────────────────────────── */
 export default function SkyMap({ stars }: { stars: Star[] }) {
   const mountRef   = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const hlRef      = useRef<THREE.BufferAttribute | null>(null);
   const parsedRef  = useRef<P[]>([]);
   const sizeRef    = useRef({ w: 800, h: 600 });
-  const [tooltip, setTooltip] = useState<Tooltip | null>(null);
+  const [tooltip, setTooltip] = useState<Tip | null>(null);
+  const lastMoveRef = useRef(0);
 
   const parsed = useMemo(() => {
     if (!stars?.length) return [];
     return stars.map(parse).filter((s): s is P => s !== null);
   }, [stars]);
 
-  /* throttle mousemove to avoid raycaster bottleneck */
-  const lastMoveRef = useRef(0);
   const handleMouseMove = useCallback((e: MouseEvent, renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera, geo: THREE.BufferGeometry, el: HTMLDivElement) => {
     const now = Date.now();
-    if (now - lastMoveRef.current < 30) return; // ~33fps cap
+    if (now - lastMoveRef.current < 30) return;
     lastMoveRef.current = now;
 
     const rect = el.getBoundingClientRect();
-    const mx   = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
-    const my   = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+    const mx = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+    const my = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
 
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
-    // scale threshold with camera distance
-    const camDist = camera.position.length();
-    raycaster.params.Points!.threshold = Math.max(20, camDist * 0.04);
+    raycaster.params.Points!.threshold = Math.max(20, camera.position.length() * 0.04);
 
-    const pts = new THREE.Points(geo);
-    const hits = raycaster.intersectObject(pts);
+    const hits = raycaster.intersectObject(new THREE.Points(geo));
     const hlAttr = hlRef.current;
     if (!hlAttr) return;
 
     for (let i = 0; i < hlAttr.count; i++) hlAttr.setX(i, 0);
-
     if (hits.length > 0) {
       const idx = hits[0].index!;
       hlAttr.setX(idx, 1);
-      hlAttr.needsUpdate = true;
       const star = parsedRef.current[idx];
-      if (star) {
-        setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star, visible: true });
-      }
+      if (star) setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star });
     } else {
-      hlAttr.needsUpdate = true;
       setTooltip(null);
     }
+    hlAttr.needsUpdate = true;
   }, []);
 
   useEffect(() => { parsedRef.current = parsed; }, [parsed]);
@@ -260,7 +206,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     camera.position.set(center.x, center.y, center.z + radius * 1.4);
     camera.lookAt(center);
 
-    // background stars
     const bgPos = new Float32Array(10_000 * 3);
     for (let i = 0; i < 10_000; i++) {
       bgPos[i*3]   = center.x + (Math.random() - 0.5) * radius * 5;
@@ -271,7 +216,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     bgGeo.setAttribute("position", new THREE.BufferAttribute(bgPos, 3));
     scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ color: 0x1a2a44, size: 1.0, sizeAttenuation: false })));
 
-    // data stars
     const n   = parsed.length;
     const pos = new Float32Array(n * 3);
     const col = new Float32Array(n * 3);
@@ -285,7 +229,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
       const lum  = s.L > 0 ? Math.log10(s.L + 1) : 0.5;
       const base = Math.max(3, Math.min(18, 3 + lum * 4.5));
-      siz[i]   = s.status === "likely dead" ? base * 1.8 : base;
+      siz[i] = s.status === "likely dead" ? base * 1.8 : base;
     }
 
     const geo = new THREE.BufferGeometry();
@@ -303,7 +247,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       blending: THREE.AdditiveBlending,
     })));
 
-    // Sun sprite
     const sc = document.createElement("canvas"); sc.width = sc.height = 128;
     const ctx = sc.getContext("2d")!;
     const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -313,10 +256,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     sunSp.scale.setScalar(radius * 0.05);
     scene.add(sunSp);
 
-    // controls
     const keys: Record<string, boolean> = {};
     const euler = new THREE.Euler(0, 0, 0, "YXZ");
-    let locked  = false;
+    let locked = false;
     euler.setFromQuaternion(camera.quaternion);
 
     const onKD = (e: KeyboardEvent) => { keys[e.code] = true; };
@@ -324,10 +266,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     window.addEventListener("keydown", onKD);
     window.addEventListener("keyup",   onKU);
     renderer.domElement.addEventListener("click", () => renderer.domElement.requestPointerLock());
-    const onLC = () => {
-      locked = document.pointerLockElement === renderer.domElement;
-      if (locked) setTooltip(null);
-    };
+    const onLC = () => { locked = document.pointerLockElement === renderer.domElement; if (locked) setTooltip(null); };
     const onMM = (e: MouseEvent) => {
       if (locked) {
         euler.y -= e.movementX * 0.002;
@@ -341,8 +280,8 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     document.addEventListener("mousemove", onMM);
 
     let speed = radius * 0.3;
-    el.addEventListener("wheel", (e: WheelEvent) => {
-      speed = Math.max(1, Math.min(radius * 8, speed * (e.deltaY > 0 ? 0.85 : 1.18)));
+    el.addEventListener("wheel", (ev: WheelEvent) => {
+      speed = Math.max(1, Math.min(radius * 8, speed * (ev.deltaY > 0 ? 0.85 : 1.18)));
     }, { passive: true });
 
     const obs = new ResizeObserver(() => {
@@ -387,40 +326,27 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={mountRef} style={{ width: "100%", height: "100%", cursor: tooltip ? "crosshair" : "default" }} />
 
-      {tooltip && (
-        <StarTooltip
-          tip={tooltip}
-          containerW={sizeRef.current.w}
-          containerH={sizeRef.current.h}
-        />
-      )}
+      {tooltip && <Tooltip tip={tooltip} cw={sizeRef.current.w} ch={sizeRef.current.h} />}
 
-      {/* Legend */}
+      {/* legend */}
       <div style={{ ...panel, top: 14, left: 14 }}>
-        {(["likely dead", "uncertain", "alive"] as const).map(s => {
-          const m = statusMeta(s);
-          return (
-            <div key={s} style={{ display: "flex", alignItems: "center", gap: 7, lineHeight: 2 }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: m.color, boxShadow: `0 0 5px ${m.color}`, flexShrink: 0, display: "inline-block" }} />
-              <span style={{ color: "#7a82a6" }}>{s}</span>
-            </div>
-          );
-        })}
-        <div style={{ display: "flex", alignItems: "center", gap: 7, lineHeight: 2 }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#fde98a", boxShadow: "0 0 5px #fde98a", flexShrink: 0, display: "inline-block" }} />
-          <span style={{ color: "#7a82a6" }}>Sun</span>
-        </div>
+        {(["likely dead", "uncertain", "alive"] as const).map(s => (
+          <div key={s} style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: 2 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: STATUS_COLOR[s], boxShadow: `0 0 4px ${STATUS_COLOR[s]}`, display: "inline-block", flexShrink: 0 }} />
+            <span style={{ color: "#6a7296" }}>{s}</span>
+          </div>
+        ))}
       </div>
 
-      {/* Navigation hint */}
+      {/* nav hint */}
       <div style={{ ...panel, bottom: 14, left: 14 }}>
-        <div style={{ color: "#7a82a6", fontWeight: 600, marginBottom: 3 }}>NAVIGATION</div>
-        <div>Click → capture mouse</div>
-        <div>W / S — forward / back</div>
-        <div>A / D — strafe</div>
-        <div>E / Q — up / down</div>
-        <div>Scroll — speed</div>
-        <div>Esc — release</div>
+        <div style={{ color: "#6a7296", fontWeight: 600, marginBottom: 2 }}>NAVIGATION</div>
+        {[["W/S", "forward/back"],["A/D", "strafe"],["E/Q", "up/down"],["Scroll", "speed"],["Click", "capture mouse"],["Esc", "release"]].map(([k, v]) => (
+          <div key={k} style={{ display: "flex", gap: 6 }}>
+            <span style={{ color: "#4a5278", minWidth: 36, fontWeight: 600 }}>{k}</span>
+            <span style={{ color: "#3d4460" }}>{v}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -428,10 +354,10 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
 
 const panel: React.CSSProperties = {
   position: "absolute",
-  background: "rgba(4,5,15,0.82)",
-  border: "1px solid rgba(255,255,255,0.07)",
-  borderRadius: 8, padding: "8px 14px",
-  fontSize: 11, color: "#3d4460", lineHeight: 1.9,
+  background: "rgba(4,5,15,0.80)",
+  border: "1px solid rgba(255,255,255,0.06)",
+  borderRadius: 8, padding: "8px 12px",
+  fontSize: 11, lineHeight: 1.9,
   backdropFilter: "blur(6px)",
   userSelect: "none", pointerEvents: "none",
 };
