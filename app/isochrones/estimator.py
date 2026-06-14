@@ -3,53 +3,47 @@ import pandas as pd
 
 # Physics-based stellar age estimation.
 #
-# The old KDTree/isochrone approach returned the same value (~1e9 yr) for almost
-# all stars because the isochrone grid only covered a narrow logAge range and the
-# nearest-neighbour lookup collapsed to a single point.
+# age_fraction = (L_obs - L_ZAMS) / (L_TAMS - L_ZAMS)  clamped to [0.05, 0.95]
 #
-# New approach: estimate the fractional age on the Main Sequence from a star's
-# luminosity relative to empirical ZAMS/TAMS luminosities for its mass.
+# L_ZAMS(M) = M^4
+# L_TAMS(M) = M^4 * k,  k=2.0 for M<2, k=1.6 for massive stars
 #
-#   age_fraction ≈ (L_obs - L_ZAMS(M)) / (L_TAMS(M) - L_ZAMS(M))
-#
-# L_ZAMS ≈ M^4  (classic mass-luminosity relation)
-# L_TAMS ≈ M^4 * k  where k=2.0 for M<2 M☉, k=1.6 for massive stars
-# Result clamped to [0.05, 0.95] to avoid degenerate values.
-#
-# t_age = age_fraction * t_life
+# Special cases:
+#   L < L_ZAMS  → star is sub-luminous for its mass (giant/pre-MS) → fraction = 0.95
+#                 (treat as near end-of-life so t_remaining < 0 → "likely dead")
+#   L >> L_TAMS → star is post-MS → fraction = 0.95
 
 
 class IsochroneAgeEstimator:
-    """Estimates stellar age from luminosity relative to ZAMS/TAMS."""
-
     def __init__(self, iso_path: str = ""):
-        # iso_path kept for API compatibility but no longer used
-        pass
+        pass  # iso_path kept for API compatibility
 
     def estimate_fraction(self, L: float, M: float) -> float:
-        """Return fractional MS age in [0.05, 0.95] for given L and M."""
-        if np.isnan(L) or np.isnan(M) or M <= 0 or L <= 0:
+        if not np.isfinite(L) or not np.isfinite(M) or M <= 0 or L <= 0:
             return np.nan
 
         L_zams = M ** 4.0
         k_tams = 2.0 if M < 2.0 else 1.6
         L_tams = L_zams * k_tams
-
         denom = L_tams - L_zams
+
         if denom <= 0:
             return np.nan
 
         frac = (L - L_zams) / denom
+
+        # Stars brighter than TAMS or sub-luminous → evolved / off MS
+        if frac >= 1.0 or frac < 0:
+            return 0.97  # marks as near/past end → t_age ≈ t_life → t_remaining ≈ 0 or negative
+
         return float(np.clip(frac, 0.05, 0.95))
 
     def apply(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-        if "t_life" not in df.columns or "L" not in df.columns or "M" not in df.columns:
+        if not all(c in df.columns for c in ("t_life", "L", "M")):
             df["t_age"] = np.nan
             return df
 
-        fractions = df.apply(
-            lambda r: self.estimate_fraction(r["L"], r["M"]), axis=1
-        )
+        fractions = df.apply(lambda r: self.estimate_fraction(r["L"], r["M"]), axis=1)
         df["t_age"] = fractions * df["t_life"]
         return df

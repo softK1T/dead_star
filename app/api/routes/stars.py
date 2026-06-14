@@ -13,6 +13,15 @@ COLUMNS = [
 ]
 
 
+def _safe_records(df: pd.DataFrame) -> list[dict]:
+    """Convert DataFrame to records replacing NaN/Inf with None (not empty string)."""
+    return [
+        {k: (None if (isinstance(v, float) and not math.isfinite(v)) else v)
+         for k, v in row.items()}
+        for row in df.to_dict(orient="records")
+    ]
+
+
 @router.get("/stars")
 async def get_stars(
     request: Request,
@@ -41,13 +50,17 @@ async def get_stars(
     total = len(df)
 
     if map_mode:
-        sample = df if limit >= total else df.iloc[::max(1, total // limit)].head(limit)
-        rows = sample[COLUMNS].fillna(value="").to_dict(orient="records")
+        if limit >= total:
+            sample = df
+        else:
+            # Random-ish sample: shuffle by HIP hash for deterministic but spread result
+            sample = df.sample(n=limit, random_state=42)
+        rows = _safe_records(sample[COLUMNS])
         return {"data": rows, "total": total, "page": 1, "limit": len(rows)}
 
     start = (page - 1) * limit
     end = start + limit
-    rows = df.iloc[start:end][COLUMNS].fillna(value="").to_dict(orient="records")
+    rows = _safe_records(df.iloc[start:end][COLUMNS])
     return {"data": rows, "total": total, "page": page, "limit": limit}
 
 
@@ -59,55 +72,33 @@ async def get_nearest(hip_id: int, request: Request, n: int = Query(5, ge=1, le=
         raise HTTPException(status_code=404, detail="Star not found")
 
     t = target.iloc[0]
-    # Need 3D cartesian coords — compute from RA/Dec/distance if x/y/z not present
+
     def get_xyz(row):
-        ra = row.get("RAdeg", None)
-        de = row.get("DEdeg", None)
-        dist = row.get("distance_ly", None)
-        if ra is None or de is None or dist is None:
-            return None, None, None
         try:
-            ra_r = math.radians(float(ra))
-            de_r = math.radians(float(de))
-            d = float(dist)
-            x = d * math.cos(de_r) * math.cos(ra_r)
-            y = d * math.cos(de_r) * math.sin(ra_r)
-            z = d * math.sin(de_r)
-            return x, y, z
-        except (ValueError, TypeError):
+            ra_r = math.radians(float(row["RAdeg"]))
+            de_r = math.radians(float(row["DEdeg"]))
+            d = float(row["distance_ly"])
+            return d * math.cos(de_r) * math.cos(ra_r), d * math.cos(de_r) * math.sin(ra_r), d * math.sin(de_r)
+        except (ValueError, TypeError, KeyError):
             return None, None, None
 
-    # Check if x/y/z columns exist already
     has_xyz = all(c in df.columns for c in ["x", "y", "z"])
 
     if has_xyz:
         tx, ty, tz = float(t["x"]), float(t["y"]), float(t["z"])
-        others = df[df["HIP"] != hip_id].copy()
-        others = others.dropna(subset=["x", "y", "z"])
-        others["_dist"] = (
-            (others["x"] - tx) ** 2 +
-            (others["y"] - ty) ** 2 +
-            (others["z"] - tz) ** 2
-        ) ** 0.5
+        others = df[df["HIP"] != hip_id].dropna(subset=["x", "y", "z"]).copy()
+        others["_dist"] = ((others["x"] - tx)**2 + (others["y"] - ty)**2 + (others["z"] - tz)**2) ** 0.5
     else:
         tx, ty, tz = get_xyz(t)
         if tx is None:
             raise HTTPException(status_code=422, detail="Target star has no coordinates")
         others = df[df["HIP"] != hip_id].copy()
         coords = others.apply(lambda r: pd.Series(get_xyz(r), index=["_x", "_y", "_z"]), axis=1)
-        others = others.join(coords)
-        valid = others.dropna(subset=["_x", "_y", "_z"])
-        valid = valid.copy()
-        valid["_dist"] = (
-            (valid["_x"] - tx) ** 2 +
-            (valid["_y"] - ty) ** 2 +
-            (valid["_z"] - tz) ** 2
-        ) ** 0.5
-        others = valid
+        others = others.join(coords).dropna(subset=["_x", "_y", "_z"]).copy()
+        others["_dist"] = ((others["_x"] - tx)**2 + (others["_y"] - ty)**2 + (others["_z"] - tz)**2) ** 0.5
 
     nearest = others.nsmallest(n, "_dist")
-    rows = nearest[COLUMNS].fillna(value="").to_dict(orient="records")
-    return rows
+    return _safe_records(nearest[COLUMNS])
 
 
 @router.get("/stars/{hip_id}")
@@ -116,16 +107,16 @@ async def get_star(hip_id: int, request: Request):
     match = df[df["HIP"] == hip_id]
     if match.empty:
         raise HTTPException(status_code=404, detail="Star not found")
-    return match.iloc[0][COLUMNS].fillna(value="").to_dict()
+    row = match.iloc[0][COLUMNS].to_dict()
+    return {k: (None if (isinstance(v, float) and not math.isfinite(v)) else v) for k, v in row.items()}
 
 
 @router.get("/stats")
 async def get_stats(request: Request):
     df: pd.DataFrame = request.app.state.df
-    total = len(df)
     counts = df["status"].value_counts().to_dict()
     return {
-        "total": total,
+        "total": len(df),
         "likely_dead": counts.get("likely dead", 0),
         "uncertain": counts.get("uncertain", 0),
         "alive": counts.get("alive", 0),
@@ -141,7 +132,6 @@ async def export_csv(
     dist_max: float | None = Query(None),
 ):
     df: pd.DataFrame = request.app.state.df.copy()
-
     if status:
         df = df[df["status"] == status]
     if spectral_type:
@@ -155,7 +145,6 @@ async def export_csv(
     buf = io.StringIO()
     df[export_cols].to_csv(buf, index=False)
     buf.seek(0)
-
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
