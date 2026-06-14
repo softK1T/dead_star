@@ -1,1 +1,0 @@
-from .hipparcos import HipparcosLoader
