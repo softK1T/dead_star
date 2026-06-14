@@ -187,8 +187,13 @@ export default function App() {
       {/* ── Body ── */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
-        {/* 3D map */}
-        <div style={{ flex: "0 0 55%", position: "relative", borderRight: "1px solid var(--border)" }}>
+        {/* 3D map — explicit overflow:hidden so canvas never paints outside */}
+        <div style={{
+          flex: "0 0 55%",
+          position: "relative",
+          overflow: "hidden",
+          borderRight: "1px solid var(--border)",
+        }}>
           <SkyMap
             stars={mapStars}
             flyToHip={flyToHip}
@@ -197,8 +202,17 @@ export default function App() {
           />
         </div>
 
-        {/* Right panel */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Right panel — solid background + isolation so canvas never bleeds through */}
+        <div style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          background: "var(--bg)",
+          isolation: "isolate",
+          position: "relative",
+          zIndex: 1,
+        }}>
 
           {/* Tabs */}
           <div style={{
@@ -214,8 +228,14 @@ export default function App() {
             ))}
           </div>
 
-          {/* Panel content */}
-          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          {/* Panel content — always opaque */}
+          <div style={{
+            flex: 1,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            background: "var(--bg)",
+          }}>
             {sidePanel === "table" && (
               <div style={{ flex: 1, overflow: "hidden", padding: 12 }}>
                 <StarTable
