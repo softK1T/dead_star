@@ -5,6 +5,8 @@ import StarTable from "./components/StarTable";
 import StarDetail from "./components/StarDetail";
 import HRDiagram from "./components/HRDiagram";
 import Histograms from "./components/Histograms";
+import Timeline from "./components/Timeline";
+import DyingSoon from "./components/DyingSoon";
 
 const MAP_COUNTS = [
   { label: "500",  value: 500 },
@@ -14,19 +16,27 @@ const MAP_COUNTS = [
   { label: "All",  value: 99_999 },
 ];
 
-type SidePanel = "table" | "hr" | "hist";
+type SidePanel = "table" | "hr" | "hist" | "timeline" | "dying";
+
+const TABS: { id: SidePanel; label: string }[] = [
+  { id: "table",    label: "Table" },
+  { id: "hr",       label: "HR Diagram" },
+  { id: "hist",     label: "Statistics" },
+  { id: "timeline", label: "Timeline" },
+  { id: "dying",    label: "Dying Soon" },
+];
 
 export default function App() {
-  const [statusFilter, setStatusFilter] = useState("");
+  const [statusFilter,   setStatusFilter]   = useState("");
   const [spectralFilter, setSpectralFilter] = useState("");
-  const [distMin, setDistMin] = useState("");
-  const [distMax, setDistMax] = useState("");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [selectedHip, setSelectedHip] = useState<number | null>(null);
-  const [flyToHip, setFlyToHip] = useState<number | null>(null);
-  const [mapCount, setMapCount] = useState(3_000);
-  const [sidePanel, setSidePanel] = useState<SidePanel>("table");
+  const [distMin,        setDistMin]        = useState("");
+  const [distMax,        setDistMax]        = useState("");
+  const [search,         setSearch]         = useState("");
+  const [page,           setPage]           = useState(1);
+  const [selectedHip,    setSelectedHip]    = useState<number | null>(null);
+  const [flyToHip,       setFlyToHip]       = useState<number | null>(null);
+  const [mapCount,       setMapCount]       = useState(3_000);
+  const [sidePanel,      setSidePanel]      = useState<SidePanel>("table");
 
   const { data, isLoading } = useStars(
     statusFilter || undefined, search || undefined,
@@ -61,10 +71,10 @@ export default function App() {
 
   const handleExport = () => {
     const params = new URLSearchParams();
-    if (statusFilter)  params.set("status",        statusFilter);
+    if (statusFilter)   params.set("status",        statusFilter);
     if (spectralFilter) params.set("spectral_type", spectralFilter);
-    if (distMin)       params.set("dist_min",       distMin);
-    if (distMax)       params.set("dist_max",       distMax);
+    if (distMin)        params.set("dist_min",       distMin);
+    if (distMax)        params.set("dist_max",       distMax);
     const a = document.createElement("a");
     a.href = `/api/export/csv?${params.toString()}`;
     a.download = "dead_stars_export.csv";
@@ -72,18 +82,22 @@ export default function App() {
   };
 
   const tabStyle = (active: boolean): React.CSSProperties => ({
-    padding: "5px 14px", fontSize: 12, borderRadius: "6px 6px 0 0",
+    padding: "5px 12px", fontSize: 12,
+    borderRadius: "6px 6px 0 0",
     border: active ? "1px solid var(--border)" : "1px solid transparent",
     borderBottom: active ? "1px solid var(--surface)" : "1px solid transparent",
     background: active ? "var(--surface)" : "transparent",
     color: active ? "var(--text)" : "var(--text-muted)",
     cursor: "pointer", fontWeight: active ? 600 : 400,
-    transition: "all 0.15s", marginBottom: "-1px", position: "relative" as const,
+    transition: "all 0.15s",
+    marginBottom: "-1px", position: "relative" as const,
+    whiteSpace: "nowrap" as const,
   });
 
   return (
     <div style={{ height: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      {/* Header */}
+
+      {/* ── Header ── */}
       <header style={{
         background: "var(--surface)", borderBottom: "1px solid var(--border)",
         padding: "10px 20px", display: "flex", alignItems: "center", gap: 20,
@@ -115,7 +129,6 @@ export default function App() {
         )}
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-          {/* Export CSV */}
           <button
             onClick={handleExport}
             style={{
@@ -171,8 +184,9 @@ export default function App() {
         </div>
       </header>
 
-      {/* Body */}
+      {/* ── Body ── */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+
         {/* 3D map */}
         <div style={{ flex: "0 0 55%", position: "relative", borderRight: "1px solid var(--border)" }}>
           <SkyMap
@@ -191,17 +205,17 @@ export default function App() {
             display: "flex", gap: 2, padding: "8px 12px 0",
             borderBottom: "1px solid var(--border)",
             background: "var(--bg)", flexShrink: 0,
+            overflowX: "auto",
           }}>
-            <button style={tabStyle(sidePanel === "table")} onClick={() => setSidePanel("table")}>Table</button>
-            <button style={tabStyle(sidePanel === "hr")}    onClick={() => setSidePanel("hr")}>HR Diagram</button>
-            <button style={tabStyle(sidePanel === "hist")}  onClick={() => setSidePanel("hist")}>Statistics</button>
+            {TABS.map(({ id, label }) => (
+              <button key={id} style={tabStyle(sidePanel === id)} onClick={() => setSidePanel(id)}>
+                {label}
+              </button>
+            ))}
           </div>
 
           {/* Panel content */}
-          <div style={{
-            flex: 1, overflow: "hidden",
-            display: "flex", flexDirection: "column",
-          }}>
+          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             {sidePanel === "table" && (
               <div style={{ flex: 1, overflow: "hidden", padding: 12 }}>
                 <StarTable
@@ -220,8 +234,7 @@ export default function App() {
             {sidePanel === "hr" && (
               <div style={{ flex: 1, overflow: "hidden" }}>
                 <HRDiagram
-                  stars={mapStars}
-                  selectedHip={selectedHip}
+                  stars={mapStars} selectedHip={selectedHip}
                   onSelect={hip => { setSelectedHip(hip); setFlyToHip(hip); }}
                 />
               </div>
@@ -229,6 +242,22 @@ export default function App() {
             {sidePanel === "hist" && (
               <div style={{ flex: 1, overflow: "hidden" }}>
                 <Histograms stars={mapStars} />
+              </div>
+            )}
+            {sidePanel === "timeline" && (
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                <Timeline
+                  stars={mapStars} selectedHip={selectedHip}
+                  onSelect={hip => { setSelectedHip(hip); setFlyToHip(hip); }}
+                />
+              </div>
+            )}
+            {sidePanel === "dying" && (
+              <div style={{ flex: 1, overflow: "hidden" }}>
+                <DyingSoon
+                  stars={mapStars} selectedHip={selectedHip}
+                  onSelect={hip => { setSelectedHip(hip); setFlyToHip(hip); setSearch(String(hip)); setPage(1); }}
+                />
               </div>
             )}
           </div>
