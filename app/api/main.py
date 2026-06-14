@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.stars import router as stars_router
+from app.api.routes.nearest import build_kdtree
 from app.catalog import HipparcosLoader
 from app.classifier import StarStatusClassifier
 from app.isochrones import IsochroneAgeEstimator
@@ -15,11 +16,19 @@ ISO_PATH = Path(__file__).resolve().parent.parent.parent / "iso.csv"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    df = HipparcosLoader(row_limit=-1).load()  # -1 loads all ~118k Hipparcos stars
+    df = HipparcosLoader(row_limit=-1).load()
     df = StellarPhysics().enrich(df)
     df = IsochroneAgeEstimator(str(ISO_PATH)).apply(df)
     df = StarStatusClassifier().classify(df)
-    app.state.df = df
+    df = df.reset_index(drop=True)  # ensure clean integer index
+
+    # Build KDTree once for O(log n) nearest-neighbour queries
+    tree, hips, orig_idx, xyz = build_kdtree(df)
+    app.state.df        = df
+    app.state.kdtree    = tree
+    app.state.kd_hips   = hips
+    app.state.kd_idx    = orig_idx
+    app.state.kd_xyz    = xyz
     yield
     app.state.df = None
 

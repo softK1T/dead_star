@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 import pandas as pd
+import numpy as np
 import io
 import math
 
@@ -14,7 +15,7 @@ COLUMNS = [
 
 
 def _safe_records(df: pd.DataFrame) -> list[dict]:
-    """Convert DataFrame to records replacing NaN/Inf with None (not empty string)."""
+    """Serialize rows replacing NaN/Inf with None."""
     return [
         {k: (None if (isinstance(v, float) and not math.isfinite(v)) else v)
          for k, v in row.items()}
@@ -50,17 +51,11 @@ async def get_stars(
     total = len(df)
 
     if map_mode:
-        if limit >= total:
-            sample = df
-        else:
-            # Random-ish sample: shuffle by HIP hash for deterministic but spread result
-            sample = df.sample(n=limit, random_state=42)
-        rows = _safe_records(sample[COLUMNS])
-        return {"data": rows, "total": total, "page": 1, "limit": len(rows)}
+        sample = df if limit >= total else df.sample(n=limit, random_state=42)
+        return {"data": _safe_records(sample[COLUMNS]), "total": total, "page": 1, "limit": len(sample)}
 
     start = (page - 1) * limit
-    end = start + limit
-    rows = _safe_records(df.iloc[start:end][COLUMNS])
+    rows = _safe_records(df.iloc[start: start + limit][COLUMNS])
     return {"data": rows, "total": total, "page": page, "limit": limit}
 
 
@@ -72,33 +67,25 @@ async def get_nearest(hip_id: int, request: Request, n: int = Query(5, ge=1, le=
         raise HTTPException(status_code=404, detail="Star not found")
 
     t = target.iloc[0]
+    try:
+        ra_r  = math.radians(float(t["RAdeg"]))
+        de_r  = math.radians(float(t["DEdeg"]))
+        d     = float(t["distance_ly"])
+        tx    = d * math.cos(de_r) * math.cos(ra_r)
+        ty    = d * math.cos(de_r) * math.sin(ra_r)
+        tz    = d * math.sin(de_r)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="Target star has no valid coordinates")
 
-    def get_xyz(row):
-        try:
-            ra_r = math.radians(float(row["RAdeg"]))
-            de_r = math.radians(float(row["DEdeg"]))
-            d = float(row["distance_ly"])
-            return d * math.cos(de_r) * math.cos(ra_r), d * math.cos(de_r) * math.sin(ra_r), d * math.sin(de_r)
-        except (ValueError, TypeError, KeyError):
-            return None, None, None
+    tree      = request.app.state.kdtree
+    kd_idx    = request.app.state.kd_idx
+    # Query n+1 because the star itself may be in the tree
+    dists, ii = tree.query([tx, ty, tz], k=min(n + 1, len(kd_idx)))
+    # Filter out the target star itself
+    result_idx = [kd_idx[i] for i in (ii if hasattr(ii, '__iter__') else [ii])
+                  if df.iloc[kd_idx[i]]["HIP"] != hip_id][:n]
 
-    has_xyz = all(c in df.columns for c in ["x", "y", "z"])
-
-    if has_xyz:
-        tx, ty, tz = float(t["x"]), float(t["y"]), float(t["z"])
-        others = df[df["HIP"] != hip_id].dropna(subset=["x", "y", "z"]).copy()
-        others["_dist"] = ((others["x"] - tx)**2 + (others["y"] - ty)**2 + (others["z"] - tz)**2) ** 0.5
-    else:
-        tx, ty, tz = get_xyz(t)
-        if tx is None:
-            raise HTTPException(status_code=422, detail="Target star has no coordinates")
-        others = df[df["HIP"] != hip_id].copy()
-        coords = others.apply(lambda r: pd.Series(get_xyz(r), index=["_x", "_y", "_z"]), axis=1)
-        others = others.join(coords).dropna(subset=["_x", "_y", "_z"]).copy()
-        others["_dist"] = ((others["_x"] - tx)**2 + (others["_y"] - ty)**2 + (others["_z"] - tz)**2) ** 0.5
-
-    nearest = others.nsmallest(n, "_dist")
-    return _safe_records(nearest[COLUMNS])
+    return _safe_records(df.iloc[result_idx][COLUMNS])
 
 
 @router.get("/stars/{hip_id}")
@@ -131,7 +118,7 @@ async def export_csv(
     dist_min: float | None = Query(None),
     dist_max: float | None = Query(None),
 ):
-    df: pd.DataFrame = request.app.state.df.copy()
+    df = request.app.state.df.copy()
     if status:
         df = df[df["status"] == status]
     if spectral_type:
