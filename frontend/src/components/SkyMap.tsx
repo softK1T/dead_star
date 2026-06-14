@@ -41,6 +41,117 @@ function toXYZ(d: number, ra: number, dec: number) {
   );
 }
 
+/** Build Cartesian axis group: 3 axes + XZ grid + tick labels as sprites */
+function buildAxes(maxDist: number): THREE.Group {
+  const group = new THREE.Group();
+  const STEP  = axisStep(maxDist);
+  const LEN   = Math.ceil(maxDist / STEP) * STEP;
+  const TICKS = Math.floor(LEN / STEP);
+
+  const axes = [
+    { dir: new THREE.Vector3(1,0,0), neg: new THREE.Vector3(-1,0,0), color: 0xff4455, label: "X (ly)" },
+    { dir: new THREE.Vector3(0,1,0), neg: new THREE.Vector3(0,-1,0), color: 0x44ff88, label: "Y (ly)" },
+    { dir: new THREE.Vector3(0,0,1), neg: new THREE.Vector3(0,0,-1), color: 0x4488ff, label: "Z (ly)" },
+  ] as const;
+
+  for (const { dir, neg, color, label } of axes) {
+    // Positive axis (solid)
+    const geo1 = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0,0,0), dir.clone().multiplyScalar(LEN),
+    ]);
+    group.add(new THREE.Line(geo1, new THREE.LineBasicMaterial({ color, opacity: 0.7, transparent: true })));
+    // Negative axis (dashed look — low opacity)
+    const geo2 = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0,0,0), neg.clone().multiplyScalar(LEN * 0.4),
+    ]);
+    group.add(new THREE.Line(geo2, new THREE.LineBasicMaterial({ color, opacity: 0.22, transparent: true })));
+
+    // Axis label sprite at tip
+    group.add(makeTextSprite(label, dir.clone().multiplyScalar(LEN * 1.04), color, 18));
+
+    // Tick marks + labels along positive axis
+    for (let i = 1; i <= TICKS; i++) {
+      const v = dir.clone().multiplyScalar(i * STEP);
+      // Small tick line (perpendicular stub — just a tiny cross)
+      const tickGeo = new THREE.BufferGeometry().setFromPoints([
+        v.clone().addScaledVector(upOf(dir), -STEP * 0.04),
+        v.clone().addScaledVector(upOf(dir),  STEP * 0.04),
+      ]);
+      group.add(new THREE.Line(tickGeo, new THREE.LineBasicMaterial({ color, opacity: 0.35, transparent: true })));
+      // Tick label every other tick to avoid clutter
+      if (i % 2 === 0 || TICKS <= 5) {
+        group.add(makeTextSprite(
+          formatDist(i * STEP),
+          v.clone().addScaledVector(upOf(dir), STEP * 0.18),
+          color, 12,
+        ));
+      }
+    }
+  }
+
+  // XZ grid (galactic plane approximation)
+  const gridMat = new THREE.LineBasicMaterial({ color: 0x1c2a44, opacity: 0.35, transparent: true });
+  for (let i = -TICKS; i <= TICKS; i++) {
+    const pts1 = [
+      new THREE.Vector3(i * STEP, 0, -LEN),
+      new THREE.Vector3(i * STEP, 0,  LEN),
+    ];
+    const pts2 = [
+      new THREE.Vector3(-LEN, 0, i * STEP),
+      new THREE.Vector3( LEN, 0, i * STEP),
+    ];
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts1), gridMat));
+    group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts2), gridMat));
+  }
+
+  // Origin marker
+  const originGeo = new THREE.BufferGeometry();
+  const originPos = new Float32Array([0,0,0]);
+  originGeo.setAttribute("position", new THREE.BufferAttribute(originPos, 3));
+  group.add(new THREE.Points(originGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 4, sizeAttenuation: false })));
+
+  return group;
+}
+
+function axisStep(maxDist: number): number {
+  const raw = maxDist / 5;
+  const exp = Math.pow(10, Math.floor(Math.log10(raw)));
+  const mant = raw / exp;
+  const nice = mant < 1.5 ? 1 : mant < 3.5 ? 2 : mant < 7.5 ? 5 : 10;
+  return nice * exp;
+}
+
+function formatDist(v: number): string {
+  return v >= 1000 ? (v / 1000).toFixed(0) + "k" : String(Math.round(v));
+}
+
+function upOf(dir: THREE.Vector3): THREE.Vector3 {
+  if (Math.abs(dir.y) < 0.9) return new THREE.Vector3(0, 1, 0);
+  return new THREE.Vector3(1, 0, 0);
+}
+
+function makeTextSprite(text: string, pos: THREE.Vector3, color: number, fontSize: number): THREE.Sprite {
+  const c = document.createElement("canvas");
+  c.width  = 256;
+  c.height = 64;
+  const ctx = c.getContext("2d")!;
+  ctx.clearRect(0, 0, 256, 64);
+  const hex = "#" + color.toString(16).padStart(6, "0");
+  ctx.fillStyle = hex;
+  ctx.globalAlpha = 0.85;
+  ctx.font = `${fontSize * 2}px monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 128, 32);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  const scale = fontSize * 8;
+  sprite.scale.set(scale, scale / 4, 1);
+  sprite.position.copy(pos);
+  return sprite;
+}
+
 const VERT = /* glsl */`
   attribute float aSize;
   attribute vec3  aColor;
@@ -92,7 +203,7 @@ function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
   if (top < 6) top = 6;
   if (top + H > ch - 6) top = ch - H - 6;
   const trem = tip.star.t_remaining_gyr;
-  const tremStr = !isFinite(trem) ? "\u2014"
+  const tremStr = !isFinite(trem) ? "—"
     : Math.abs(trem) < 0.001 ? "< 1 Myr"
     : Math.abs(trem) < 1 ? (trem * 1000).toFixed(0) + " Myr"
     : trem.toFixed(1) + " Gyr";
@@ -107,13 +218,13 @@ function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, boxShadow: `0 0 6px ${color}`, flexShrink: 0, display: "inline-block" }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e6f5" }}>HIP\u00a0{tip.star.HIP}</span>
-        <span style={{ marginLeft: "auto", fontSize: 11, color, fontWeight: 500 }}>{tip.star.SpType || "\u2014"}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e6f5" }}>HIP {tip.star.HIP}</span>
+        <span style={{ marginLeft: "auto", fontSize: 11, color, fontWeight: 500 }}>{tip.star.SpType || "—"}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 4px", textAlign: "center" }}>
         {([
-          ["dist", tip.star.distance_ly.toFixed(0) + "\u00a0ly", "#c8cfe8"],
-          ["lum",  tip.star.L.toFixed(1) + "\u00a0L\u2609", "#c8cfe8"],
+          ["dist", tip.star.distance_ly.toFixed(0) + " ly", "#c8cfe8"],
+          ["lum",  tip.star.L.toFixed(1) + " L☉", "#c8cfe8"],
           ["left", tremStr, tremColor],
         ] as [string, string, string][]).map(([k, v, vc]) => (
           <div key={k}>
@@ -142,12 +253,14 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
   const sizeRef     = useRef({ w: 800, h: 600 });
   const cameraRef   = useRef<THREE.PerspectiveCamera | null>(null);
   const speedRef    = useRef(50);
+  const axesGroupRef = useRef<THREE.Group | null>(null);
   const [tooltip, setTooltip]   = useState<Tip | null>(null);
   const [locked,  setLocked]    = useState(false);
   const [speedDisplay, setSpeedDisplay] = useState(50);
+  const [showAxes, setShowAxes] = useState(true);
   const lastMoveRef  = useRef(0);
   const flyTargetRef = useRef<THREE.Vector3 | null>(null);
-  const hipIndexRef  = useRef<Map<number, number>>(new Map()); // HIP → array index
+  const hipIndexRef  = useRef<Map<number, number>>(new Map());
 
   const parsed = useMemo(() => {
     if (!stars?.length) return [];
@@ -156,7 +269,12 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
 
   useEffect(() => { parsedRef.current = parsed; }, [parsed]);
 
-  // Fly to star when flyToHip changes
+  // Toggle axes visibility
+  useEffect(() => {
+    if (axesGroupRef.current) axesGroupRef.current.visible = showAxes;
+  }, [showAxes]);
+
+  // Fly to star
   useEffect(() => {
     if (flyToHip == null || !cameraRef.current) return;
     const idx = hipIndexRef.current.get(flyToHip);
@@ -164,12 +282,11 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
     const s = parsedRef.current[idx];
     if (!s) return;
     const target = toXYZ(s.distance_ly, s.RAdeg, s.DEdeg);
-    // Stop 20ly short so we can see the star
     const dir = target.clone().normalize();
     flyTargetRef.current = target.clone().addScaledVector(dir, -20);
   }, [flyToHip]);
 
-  // Highlight selected star from outside
+  // Highlight selected star
   useEffect(() => {
     const attr = hlRef.current;
     if (!attr) return;
@@ -212,7 +329,7 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
       -Math.cos(gcDec) * Math.sin(gcRA) * 1000,
     );
 
-    // Background
+    // Background stars
     const bgPos = new Float32Array(12_000 * 3);
     for (let i = 0; i < 12_000; i++) {
       const d = Math.random() * FAR * 0.6;
@@ -228,7 +345,13 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
       color: 0x1a2840, size: 0.7, sizeAttenuation: false, transparent: true, opacity: 0.45,
     })));
 
-    // Stars
+    // Cartesian axes + grid
+    const axesGroup = buildAxes(maxDist);
+    axesGroup.visible = showAxes;
+    axesGroupRef.current = axesGroup;
+    scene.add(axesGroup);
+
+    // Stars geometry
     const n   = parsed.length;
     const pos = new Float32Array((n + 1) * 3);
     const col = new Float32Array((n + 1) * 3);
@@ -246,7 +369,7 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
       const lum = s.L > 0 ? Math.log10(s.L + 1) : 0;
       siz[i] = Math.min(2 + lum * 3.2 * (s.status === "likely dead" ? 1.35 : 1), 12);
     }
-    // Sun
+    // Sun at origin
     pos[n*3] = 0; pos[n*3+1] = 0; pos[n*3+2] = 0;
     col[n*3] = 1; col[n*3+1] = 0.94; col[n*3+2] = 0.55;
     siz[n] = 5;
@@ -324,14 +447,12 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
       attr.needsUpdate = true;
     };
 
-    // Click: select hovered star
     const onClick = (e: MouseEvent) => {
       if (document.pointerLockElement === renderer.domElement) return;
       if (hoverIdx >= 0 && hoverIdx < parsedRef.current.length) {
         const star = parsedRef.current[hoverIdx];
         if (star && onStarClick) onStarClick(star.HIP);
       } else {
-        // Click on empty space → enter pointer lock
         renderer.domElement.requestPointerLock();
       }
     };
@@ -339,12 +460,10 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
     document.addEventListener("mousemove", onMouseMove);
     renderer.domElement.addEventListener("click", onClick);
 
-    // Keyboard
     const keys: Record<string, boolean> = {};
     const onKD = (e: KeyboardEvent) => {
       if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
       keys[e.code] = true;
-      // H = home
       if (e.code === "KeyH") {
         camera.position.set(0, 0, 0);
         camera.lookAt(
@@ -393,12 +512,11 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
       camera.getWorldDirection(fwd);
       right.crossVectors(fwd, camera.up).normalize();
 
-      // Manual keys
       const anyKey = keys["KeyW"]||keys["KeyS"]||keys["KeyA"]||keys["KeyD"]||
                      keys["KeyE"]||keys["KeyQ"]||keys["ArrowUp"]||keys["ArrowDown"]||
                      keys["ArrowLeft"]||keys["ArrowRight"]||keys["Space"]||keys["ShiftLeft"];
       if (anyKey) {
-        flyTargetRef.current = null; // cancel fly-to on manual input
+        flyTargetRef.current = null;
         if (keys["KeyW"] || keys["ArrowUp"])    camera.position.addScaledVector(fwd,   spd);
         if (keys["KeyS"] || keys["ArrowDown"])  camera.position.addScaledVector(fwd,  -spd);
         if (keys["KeyA"] || keys["ArrowLeft"])  camera.position.addScaledVector(right,-spd);
@@ -407,7 +525,6 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
         if (keys["KeyQ"] || keys["ShiftLeft"])  camera.position.y -= spd;
       }
 
-      // Auto fly-to
       const flyTarget = flyTargetRef.current;
       if (flyTarget) {
         tmpV.subVectors(flyTarget, camera.position);
@@ -415,10 +532,8 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
         if (dist < 5) {
           flyTargetRef.current = null;
         } else {
-          const flySpeed = Math.min(dist * 2, dist * 0.1 / dt); // decelerate near target
-          const step = Math.min(flySpeed * dt, dist - 1);
+          const step = Math.min(dist * 2 * dt, dist - 1);
           camera.position.addScaledVector(tmpV.normalize(), step);
-          // Look toward target
           camera.lookAt(flyTarget);
         }
       }
@@ -463,7 +578,6 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
 
       {tooltip && !locked && <Tooltip tip={tooltip} cw={sizeRef.current.w} ch={sizeRef.current.h} />}
 
-      {/* Crosshair */}
       {locked && (
         <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", pointerEvents: "none", opacity: 0.5 }}>
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#ffffff" strokeWidth="1">
@@ -485,30 +599,61 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#fde98a", boxShadow: "0 0 4px #fde98a", display: "inline-block", flexShrink: 0 }} />
           <span style={{ color: "#6a7296" }}>Sun (you)</span>
         </div>
+
+        {/* Axis legend */}
+        <div style={{ marginTop: 6, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 5 }}>
+          {(["X","0xff4455"] as const), (["Y","0x44ff88"] as const), (["Z","0x4488ff"] as const)}
+          {([
+            ["X", "#ff4455"],
+            ["Y", "#44ff88"],
+            ["Z", "#4488ff"],
+          ] as [string, string][]).map(([ax, col]) => (
+            <div key={ax} style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: 1.9 }}>
+              <span style={{ width: 14, height: 2, background: col, display: "inline-block", flexShrink: 0, opacity: 0.7 }} />
+              <span style={{ color: col, opacity: 0.7, fontFamily: "monospace", fontSize: 10 }}>{ax}-axis</span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Home button */}
-      <button
-        onClick={resetCamera}
-        title="Reset camera to Sun (H)"
-        style={{
-          position: "absolute", top: 14, right: 14,
-          background: "rgba(4,5,15,0.80)",
-          border: "1px solid rgba(255,255,255,0.10)",
-          borderRadius: 8, width: 34, height: 34,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          cursor: "pointer", color: "#6a7296", zIndex: 20,
-          backdropFilter: "blur(6px)",
-          transition: "color 0.15s, border-color 0.15s",
-        }}
-        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "#c8cfe8"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.25)"; }}
-        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "#6a7296"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.10)"; }}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-          <polyline points="9,22 9,12 15,12 15,22"/>
-        </svg>
-      </button>
+      {/* Top-right buttons */}
+      <div style={{ position: "absolute", top: 14, right: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+        {/* Axes toggle */}
+        <button
+          onClick={() => setShowAxes(v => !v)}
+          title={showAxes ? "Hide axes" : "Show axes"}
+          style={{
+            ...iconBtn,
+            color: showAxes ? "#4488ff" : "#6a7296",
+            borderColor: showAxes ? "rgba(68,136,255,0.35)" : "rgba(255,255,255,0.10)",
+            background: showAxes ? "rgba(68,136,255,0.10)" : "rgba(4,5,15,0.80)",
+          }}
+        >
+          {/* XYZ icon */}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <line x1="12" y1="12" x2="22" y2="12" />
+            <line x1="12" y1="12" x2="6" y2="20" />
+            <line x1="12" y1="12" x2="12" y2="2" />
+            <polyline points="19,9 22,12 19,15" />
+            <polyline points="9,17 6,20 3,17" />
+            <polyline points="9,2 12,2 12,5" />
+          </svg>
+        </button>
+
+        {/* Home */}
+        <button
+          onClick={resetCamera}
+          title="Reset camera to Sun (H)"
+          style={{ ...iconBtn }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "#c8cfe8"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "#6a7296"; }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+            <polyline points="9,22 9,12 15,12 15,22"/>
+          </svg>
+        </button>
+      </div>
 
       {/* Controls hint */}
       {!locked && (
@@ -531,14 +676,13 @@ export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Pr
         </div>
       )}
 
-      {/* Speed + ESC hint in fly mode */}
       {locked && (
         <div style={{ ...panel, bottom: 14, left: "50%", transform: "translateX(-50%)", textAlign: "center", minWidth: 120 }}>
           <div style={{ color: "#3d4460", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 2 }}>Speed</div>
           <div style={{ color: "#c8cfe8", fontVariantNumeric: "tabular-nums", fontSize: 13, fontWeight: 600 }}>
-            {speedDisplay >= 1000 ? (speedDisplay / 1000).toFixed(1) + "\u00a0kly/s" : speedDisplay + "\u00a0ly/s"}
+            {speedDisplay >= 1000 ? (speedDisplay / 1000).toFixed(1) + " kly/s" : speedDisplay + " ly/s"}
           </div>
-          <div style={{ color: "#3d4460", fontSize: 9, marginTop: 4 }}>Scroll to change \u00b7 Esc to exit</div>
+          <div style={{ color: "#3d4460", fontSize: 9, marginTop: 4 }}>Scroll to change · Esc to exit</div>
         </div>
       )}
     </div>
@@ -553,4 +697,14 @@ const panel: React.CSSProperties = {
   fontSize: 11, lineHeight: 1.9,
   backdropFilter: "blur(6px)",
   userSelect: "none", pointerEvents: "none",
+};
+
+const iconBtn: React.CSSProperties = {
+  background: "rgba(4,5,15,0.80)",
+  border: "1px solid rgba(255,255,255,0.10)",
+  borderRadius: 8, width: 34, height: 34,
+  display: "flex", alignItems: "center", justifyContent: "center",
+  cursor: "pointer", color: "#6a7296", zIndex: 20,
+  backdropFilter: "blur(6px)",
+  transition: "color 0.15s, border-color 0.15s, background 0.15s",
 };
