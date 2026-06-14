@@ -15,7 +15,6 @@ function spectralColor(spType: string): THREE.Color {
 }
 
 interface ParsedStar {
-  HIP: number;
   SpType: string;
   status: string;
   distance_ly: number;
@@ -31,7 +30,6 @@ function parseStar(s: Star): ParsedStar | null {
   if (!isFinite(d) || d <= 0 || d > 50_000) return null;
   if (!isFinite(ra) || !isFinite(dec))       return null;
   return {
-    HIP: Number(s.HIP),
     SpType: String(s.SpType || ""),
     status: String(s.status || ""),
     distance_ly: d,
@@ -54,25 +52,33 @@ function toXYZ(d: number, ra: number, dec: number): THREE.Vector3 {
 export default function SkyMap({ stars }: { stars: Star[] }) {
   const mountRef   = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  const [dbg, setDbg] = useState("waiting for data...");
+  const [dbg, setDbg] = useState("waiting...");
 
   const parsed = useMemo(() => {
-    const result = stars.map(parseStar).filter((s): s is ParsedStar => s !== null);
-    return result;
+    if (!stars || stars.length === 0) return [];
+    return stars.map(parseStar).filter((s): s is ParsedStar => s !== null);
   }, [stars]);
 
   useEffect(() => {
     const el = mountRef.current;
     if (!el) return;
 
+    if (!stars || stars.length === 0) {
+      setDbg(`stars prop: empty or undefined`);
+      return;
+    }
+
     if (parsed.length === 0) {
-      const s0 = stars[0];
-      setDbg(`props.stars=${stars.length} | parsed=0 | raw[0]=${JSON.stringify(s0).slice(0, 200)}`);
+      // show field names and first row to diagnose
+      const s0    = stars[0];
+      const keys  = s0 ? Object.keys(s0).join(", ") : "none";
+      const vals  = s0 ? `d_ly=${s0.distance_ly} ra=${s0.RAdeg} dec=${s0.DEdeg}` : "";
+      setDbg(`stars=${stars.length} parsed=0 | keys: ${keys} | ${vals}`);
       return;
     }
 
     const s0 = parsed[0];
-    setDbg(`parsed=${parsed.length} | HIP${s0.HIP} d=${s0.distance_ly.toFixed(0)}ly ra=${s0.RAdeg.toFixed(1)} dec=${s0.DEdeg.toFixed(1)}`);
+    setDbg(`ok: parsed=${parsed.length} | HIP d=${s0.distance_ly.toFixed(0)}ly`);
 
     cleanupRef.current?.();
     cleanupRef.current = null;
@@ -86,24 +92,23 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     renderer.setClearColor(0x04050f, 1);
     el.appendChild(renderer.domElement);
 
-    const scene  = new THREE.Scene();
+    const scene = new THREE.Scene();
 
-    // build positions first to compute bounding box
+    // bounding box
     const positions = parsed.map(s => toXYZ(s.distance_ly, s.RAdeg, s.DEdeg));
-    const box = new THREE.Box3();
+    const box    = new THREE.Box3();
     positions.forEach(p => box.expandByPoint(p));
     const center = new THREE.Vector3();
     const size   = new THREE.Vector3();
     box.getCenter(center);
     box.getSize(size);
-    const radius = size.length() * 0.55;
+    const radius = Math.max(size.length() * 0.55, 10);
 
-    const camera = new THREE.PerspectiveCamera(75, W / H, 1, radius * 10);
-    camera.position.copy(center).addScalar(0);
-    camera.position.z = center.z + radius * 1.3;
+    const camera = new THREE.PerspectiveCamera(75, W / H, 1, radius * 12);
+    camera.position.set(center.x, center.y, center.z + radius * 1.3);
     camera.lookAt(center);
 
-    setDbg(prev => prev + ` | center=(${center.x.toFixed(0)},${center.y.toFixed(0)},${center.z.toFixed(0)}) r=${radius.toFixed(0)} cam.z=${camera.position.z.toFixed(0)}`);
+    setDbg(prev => prev + ` r=${radius.toFixed(0)} cam.z=${camera.position.z.toFixed(0)}`);
 
     // background dust
     const bgPos = new Float32Array(6000 * 3);
@@ -115,10 +120,10 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const bgGeo = new THREE.BufferGeometry();
     bgGeo.setAttribute("position", new THREE.BufferAttribute(bgPos, 3));
     scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({
-      color: 0x1a2a44, size: 1.2, sizeAttenuation: false,
+      color: 0x1a2a44, size: 1.5, sizeAttenuation: false,
     })));
 
-    // hipparcos stars
+    // star points
     const n      = parsed.length;
     const pos    = new Float32Array(n * 3);
     const colors = new Float32Array(n * 3);
@@ -169,11 +174,11 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     });
     scene.add(new THREE.Points(geo, mat));
 
-    // Sun glow at origin
+    // Sun glow
     const sc = document.createElement("canvas");
     sc.width = sc.height = 64;
     const sctx = sc.getContext("2d")!;
-    const sg = sctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    const sg   = sctx.createRadialGradient(32, 32, 0, 32, 32, 32);
     sg.addColorStop(0, "rgba(253,233,138,1)");
     sg.addColorStop(1, "rgba(0,0,0,0)");
     sctx.fillStyle = sg;
@@ -185,9 +190,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     scene.add(sunSp);
 
     // controls
-    const keys: Record<string, boolean> = {};
-    const euler = new THREE.Euler(0, 0, 0, "YXZ");
-    let locked  = false;
+    const keys:  Record<string, boolean> = {};
+    const euler  = new THREE.Euler(0, 0, 0, "YXZ");
+    let locked   = false;
     euler.setFromQuaternion(camera.quaternion);
 
     const onKD = (e: KeyboardEvent) => { keys[e.code] = true; };
@@ -205,7 +210,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     document.addEventListener("pointerlockchange", onLC);
     document.addEventListener("mousemove", onMM);
 
-    let speed = radius * 0.25;
+    let speed = radius * 0.3;
     const onWheel = (e: WheelEvent) => {
       speed = Math.max(1, Math.min(radius * 8, speed * (e.deltaY > 0 ? 0.85 : 1.18)));
     };
@@ -247,7 +252,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       renderer.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };
-  }, [parsed]);
+  }, [parsed, stars]);
 
   useEffect(() => () => { cleanupRef.current?.(); }, []);
 
@@ -257,7 +262,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
 
       <div style={{
         position: "absolute", top: 0, left: 0, right: 0,
-        background: "rgba(0,0,0,0.7)", color: "#f87171",
+        background: "rgba(0,0,0,0.75)", color: "#f87171",
         fontSize: 10, padding: "3px 8px", fontFamily: "monospace",
         pointerEvents: "none", zIndex: 99, wordBreak: "break-all",
       }}>{dbg}</div>
