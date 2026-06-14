@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import * as THREE from "three";
 import type { Star } from "../types/star";
 
@@ -17,6 +17,7 @@ function spectralColor(spType: string): THREE.Color {
 interface P {
   SpType: string; status: string;
   distance_ly: number; RAdeg: number; DEdeg: number; L: number;
+  HIP: number;
 }
 
 function parse(s: Star): P | null {
@@ -25,7 +26,8 @@ function parse(s: Star): P | null {
   if (!isFinite(ra) || !isFinite(dec)) return null;
   return {
     SpType: String(s.SpType || ""), status: String(s.status || ""),
-    distance_ly: d, RAdeg: ra, DEdeg: dec, L: Number(s.L) || 1,
+    distance_ly: d, RAdeg: ra, DEdeg: dec,
+    L: Number(s.L) || 1, HIP: Number(s.HIP) || 0,
   };
 }
 
@@ -38,19 +40,22 @@ function xyz(d: number, ra: number, dec: number) {
   );
 }
 
-// Fixed screen-space size — no distance attenuation whatsoever
 const VERT = /* glsl */`
   attribute float aSize;
   attribute vec3  aColor;
+  attribute float aHighlight;
   varying   vec3  vColor;
+  varying   float vHL;
   void main() {
-    vColor      = aColor;
-    gl_PointSize = aSize;
+    vColor = aColor;
+    vHL    = aHighlight;
+    gl_PointSize = aSize * (1.0 + aHighlight * 1.2);
     gl_Position  = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 const FRAG = /* glsl */`
-  varying vec3 vColor;
+  varying vec3  vColor;
+  varying float vHL;
   void main() {
     vec2  uv   = gl_PointCoord - 0.5;
     float d    = length(uv) * 2.0;
@@ -58,19 +63,57 @@ const FRAG = /* glsl */`
     float core = exp(-d * d * 5.0);
     float halo = exp(-d * d * 1.2) * 0.45;
     float a    = clamp(core + halo, 0.0, 1.0);
-    vec3  col  = vColor + vec3(core * 0.5);  // white-hot center
+    vec3  col  = vColor + vec3(core * 0.5) + vec3(vHL * 0.4);
     gl_FragColor = vec4(col, a);
   }
 `;
 
+interface Tooltip { x: number; y: number; star: P; }
+
 export default function SkyMap({ stars }: { stars: Star[] }) {
-  const mountRef   = useRef<HTMLDivElement>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
+  const mountRef    = useRef<HTMLDivElement>(null);
+  const cleanupRef  = useRef<(() => void) | null>(null);
+  const hlRef       = useRef<THREE.BufferAttribute | null>(null);
+  const parsedRef   = useRef<P[]>([]);
+  const [tooltip, setTooltip] = useState<Tooltip | null>(null);
 
   const parsed = useMemo(() => {
     if (!stars?.length) return [];
     return stars.map(parse).filter((s): s is P => s !== null);
   }, [stars]);
+
+  // hover handler — defined once, reads parsedRef
+  const handleMouseMove = useCallback((e: MouseEvent, renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera, geo: THREE.BufferGeometry, el: HTMLDivElement) => {
+    const rect = el.getBoundingClientRect();
+    const mx   = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+    const my   = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
+    raycaster.params.Points!.threshold = 80; // world units hit area
+
+    const pts = new THREE.Points(geo);
+    const hits = raycaster.intersectObject(pts);
+
+    const hlAttr = hlRef.current;
+    if (!hlAttr) return;
+
+    // reset all
+    for (let i = 0; i < hlAttr.count; i++) hlAttr.setX(i, 0);
+
+    if (hits.length > 0) {
+      const idx = hits[0].index!;
+      hlAttr.setX(idx, 1);
+      setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star: parsedRef.current[idx] });
+    } else {
+      setTooltip(null);
+    }
+    hlAttr.needsUpdate = true;
+  }, []);
+
+  useEffect(() => {
+    parsedRef.current = parsed;
+  }, [parsed]);
 
   useEffect(() => {
     const el = mountRef.current;
@@ -86,20 +129,18 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     el.appendChild(renderer.domElement);
 
     const scene = new THREE.Scene();
-
-    // bounding box for camera placement only
     const positions = parsed.map(s => xyz(s.distance_ly, s.RAdeg, s.DEdeg));
     const box = new THREE.Box3();
     positions.forEach(p => box.expandByPoint(p));
-    const center = new THREE.Vector3(), sz = new THREE.Vector3();
-    box.getCenter(center); box.getSize(sz);
-    const radius = Math.max(sz.length() * 0.55, 10);
+    const center = new THREE.Vector3(), bsz = new THREE.Vector3();
+    box.getCenter(center); box.getSize(bsz);
+    const radius = Math.max(bsz.length() * 0.55, 10);
 
     const camera = new THREE.PerspectiveCamera(70, W / H, 1, radius * 15);
     camera.position.set(center.x, center.y, center.z + radius * 1.4);
     camera.lookAt(center);
 
-    // background galaxy dust
+    // background
     const bgPos = new Float32Array(10_000 * 3);
     for (let i = 0; i < 10_000; i++) {
       bgPos[i*3]   = center.x + (Math.random() - 0.5) * radius * 5;
@@ -108,34 +149,33 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     }
     const bgGeo = new THREE.BufferGeometry();
     bgGeo.setAttribute("position", new THREE.BufferAttribute(bgPos, 3));
-    scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({
-      color: 0x1a2a44, size: 1.0, sizeAttenuation: false,
-    })));
+    scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({ color: 0x1a2a44, size: 1.0, sizeAttenuation: false })));
 
-    // hipparcos stars — size in screen pixels only, no attenuation
-    const n = parsed.length;
+    // stars
+    const n   = parsed.length;
     const pos = new Float32Array(n * 3);
     const col = new Float32Array(n * 3);
     const siz = new Float32Array(n);
+    const hl  = new Float32Array(n); // highlight
 
     for (let i = 0; i < n; i++) {
       const s = parsed[i], v = positions[i];
       pos[i*3] = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
-
       const c = spectralColor(s.SpType);
       col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
-
-      // luminosity in solar units → screen size in px
-      // log scale: L=1 (sun) → 4px, L=1e6 → 16px, dead stars boosted
       const lum  = s.L > 0 ? Math.log10(s.L + 1) : 0.5;
       const base = Math.max(3, Math.min(18, 3 + lum * 4.5));
-      siz[i] = s.status === "likely dead" ? base * 1.8 : base;
+      siz[i]   = s.status === "likely dead" ? base * 1.8 : base;
     }
 
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute("aColor",   new THREE.BufferAttribute(col, 3));
-    geo.setAttribute("aSize",    new THREE.BufferAttribute(siz, 1));
+    geo.setAttribute("position",   new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("aColor",     new THREE.BufferAttribute(col, 3));
+    geo.setAttribute("aSize",      new THREE.BufferAttribute(siz, 1));
+    const hlAttr = new THREE.BufferAttribute(hl, 1);
+    hlAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute("aHighlight", hlAttr);
+    hlRef.current = hlAttr;
 
     scene.add(new THREE.Points(geo, new THREE.ShaderMaterial({
       vertexShader: VERT, fragmentShader: FRAG,
@@ -143,17 +183,13 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       blending: THREE.AdditiveBlending,
     })));
 
-    // Sun glow at origin
+    // Sun
     const sc = document.createElement("canvas"); sc.width = sc.height = 128;
     const ctx = sc.getContext("2d")!;
     const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-    g.addColorStop(0,   "rgba(255,240,150,1)");
-    g.addColorStop(0.3, "rgba(253,180,50,0.7)");
-    g.addColorStop(1,   "rgba(0,0,0,0)");
+    g.addColorStop(0, "rgba(255,240,150,1)"); g.addColorStop(0.3, "rgba(253,180,50,0.7)"); g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
-    const sunSp = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: new THREE.CanvasTexture(sc), blending: THREE.AdditiveBlending, transparent: true,
-    }));
+    const sunSp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(sc), blending: THREE.AdditiveBlending, transparent: true }));
     sunSp.scale.setScalar(radius * 0.05);
     scene.add(sunSp);
 
@@ -170,10 +206,13 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     renderer.domElement.addEventListener("click", () => renderer.domElement.requestPointerLock());
     const onLC = () => { locked = document.pointerLockElement === renderer.domElement; };
     const onMM = (e: MouseEvent) => {
-      if (!locked) return;
-      euler.y -= e.movementX * 0.002;
-      euler.x  = Math.max(-1.5, Math.min(1.5, euler.x - e.movementY * 0.002));
-      camera.quaternion.setFromEuler(euler);
+      if (locked) {
+        euler.y -= e.movementX * 0.002;
+        euler.x  = Math.max(-1.5, Math.min(1.5, euler.x - e.movementY * 0.002));
+        camera.quaternion.setFromEuler(euler);
+      } else {
+        handleMouseMove(e, renderer, camera, geo, el);
+      }
     };
     document.addEventListener("pointerlockchange", onLC);
     document.addEventListener("mousemove", onMM);
@@ -216,13 +255,50 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       renderer.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };
-  }, [parsed]);
+  }, [parsed, handleMouseMove]);
 
   useEffect(() => () => { cleanupRef.current?.(); }, []);
+
+  const statusColor = (s: string) =>
+    s === "likely dead" ? "#f04a4a" : s === "uncertain" ? "#f0b84a" : "#4af07a";
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
+
+      {/* Hover tooltip */}
+      {tooltip && (
+        <div style={{
+          position: "absolute",
+          left: tooltip.x + 16,
+          top:  tooltip.y - 10,
+          background: "rgba(4,5,15,0.95)",
+          border: `1px solid ${statusColor(tooltip.star.status)}44`,
+          borderRadius: 8,
+          padding: "10px 14px",
+          fontSize: 12,
+          color: "#c8cfe8",
+          lineHeight: 1.8,
+          pointerEvents: "none",
+          zIndex: 50,
+          backdropFilter: "blur(8px)",
+          minWidth: 180,
+          boxShadow: `0 0 20px ${statusColor(tooltip.star.status)}22`,
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4, color: "#e8ecf8" }}>
+            HIP {tooltip.star.HIP}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "0 12px" }}>
+            <span style={{ color: "#7a82a6" }}>Type</span>     <span>{tooltip.star.SpType || "—"}</span>
+            <span style={{ color: "#7a82a6" }}>Distance</span> <span>{tooltip.star.distance_ly.toFixed(0)} ly</span>
+            <span style={{ color: "#7a82a6" }}>Luminosity</span><span>{tooltip.star.L.toFixed(2)} L☉</span>
+            <span style={{ color: "#7a82a6" }}>Status</span>
+            <span style={{ color: statusColor(tooltip.star.status), fontWeight: 600 }}>
+              {tooltip.star.status}
+            </span>
+          </div>
+        </div>
+      )}
 
       <div style={{ ...panel, bottom: 14, left: 14 }}>
         <div style={{ color: "#7a82a6", fontWeight: 600, marginBottom: 3 }}>NAVIGATION</div>
@@ -242,10 +318,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
           ["#fde98a", "Sun"],
         ] as [string, string][]).map(([c, l]) => (
           <div key={l} style={{ display: "flex", alignItems: "center", gap: 7, lineHeight: 2 }}>
-            <span style={{
-              width: 7, height: 7, borderRadius: "50%", background: c,
-              boxShadow: `0 0 5px ${c}`, flexShrink: 0, display: "inline-block",
-            }} />
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: c, boxShadow: `0 0 5px ${c}`, flexShrink: 0, display: "inline-block" }} />
             {l}
           </div>
         ))}
