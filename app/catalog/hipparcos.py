@@ -3,7 +3,7 @@ import pandas as pd
 
 
 class HipparcosLoader:
-    COLUMNS = ["HIP", "RAdeg", "DEdeg", "Plx", "e_Plx", "SpType", "Vmag", "B-V", "F2"]
+    COLUMNS = ["HIP", "_RAJ2000", "_DEJ2000", "Plx", "e_Plx", "SpType", "Vmag", "B-V", "F2"]
 
     def __init__(self, row_limit: int = 10000):
         self.row_limit = row_limit
@@ -15,6 +15,7 @@ class HipparcosLoader:
         return self._clean(result[0].to_pandas())
 
     def _clean(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.rename(columns={"_RAJ2000": "RAdeg", "_DEJ2000": "DEdeg"})
         df = df[(df["F2"] < 3) & (df["Plx"] > 0)].copy()
         df = df.dropna(subset=["Vmag", "B-V"])
         return df.reset_index(drop=True)
