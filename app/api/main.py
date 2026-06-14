@@ -15,7 +15,7 @@ ISO_PATH = Path(__file__).resolve().parent.parent.parent / "iso.csv"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    df = HipparcosLoader(row_limit=-1).load()  # все ~118k звёзд Hipparcos
+    df = HipparcosLoader(row_limit=-1).load()  # -1 loads all ~118k Hipparcos stars
     df = StellarPhysics().enrich(df)
     df = IsochroneAgeEstimator(str(ISO_PATH)).apply(df)
     df = StarStatusClassifier().classify(df)

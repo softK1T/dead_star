@@ -24,8 +24,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const groups: Record<string, Star[]> = {};
     for (const s of stars) {
       if (!s.distance_ly || s.distance_ly <= 0 || !s.RAdeg || !s.DEdeg) continue;
-      // убираем абсурдные расстояния (ошибка параллакса)
-      if (s.distance_ly > 100000) continue;
+      if (s.distance_ly > 100000) continue; // filter parallax outliers
       (groups[s.status] ??= []).push(s);
     }
 
@@ -42,11 +41,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
           `HIP ${s.HIP}<br>${s.SpType || ""}<br>${s.distance_ly?.toFixed(0)} ly<br>${s.status}`
         ),
         hovertemplate: "%{text}<extra></extra>",
-        marker: {
-          color: STATUS_COLORS[status] || "#888",
-          size: 2,
-          opacity: 0.8,
-        },
+        marker: { color: STATUS_COLORS[status] || "#888", size: 2, opacity: 0.8 },
       };
     });
   }, [stars]);
@@ -72,7 +67,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
           xaxis: { title: "X (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
           yaxis: { title: "Y (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
           zaxis: { title: "Z (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
-          // камера сверху и немного сбоку — звёзды видны сразу
           camera: { eye: { x: 0.8, y: 1.5, z: 0.6 }, center: { x: 0, y: 0, z: 0 } },
           aspectmode: "cube",
         },

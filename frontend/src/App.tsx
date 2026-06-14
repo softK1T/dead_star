@@ -10,9 +10,10 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [selectedHip, setSelectedHip] = useState<number | null>(null);
 
+  // paginated table
   const { data, isLoading } = useStars(statusFilter || undefined, search || undefined, page, 50);
 
-  // 3D карта: map_mode=true — равномерная выборка по всем статусам
+  // 3D map: balanced sample across all statuses
   const { data: mapData } = useStars(statusFilter || undefined, undefined, 1, 3000, true);
 
   const { data: stats } = useStats();

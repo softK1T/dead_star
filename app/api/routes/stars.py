@@ -17,7 +17,7 @@ async def get_stars(
     search: str | None = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
-    map_mode: bool = Query(False),  # True — для 3D карты: равномерная выборка по всем статусам
+    map_mode: bool = Query(False),
 ):
     df = request.app.state.df
 
@@ -29,7 +29,7 @@ async def get_stars(
     total = len(df)
 
     if map_mode and not status:
-        # равномерный сэмпл: limit/3 на каждый статус, рандомно
+        # balanced sample: equal share per status for the 3D map
         per_status = limit // 3
         frames = []
         for s in ["alive", "likely dead", "uncertain"]:
