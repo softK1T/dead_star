@@ -10,40 +10,74 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [selectedHip, setSelectedHip] = useState<number | null>(null);
 
-  // paginated table
   const { data, isLoading } = useStars(statusFilter || undefined, search || undefined, page, 50);
-
-  // 3D map: balanced sample across all statuses
   const { data: mapData } = useStars(statusFilter || undefined, undefined, 1, 3000, true);
-
   const { data: stats } = useStats();
   const mapStars = mapData?.data ?? [];
 
   return (
-    <div className="h-screen flex flex-col bg-gray-900 text-white">
-      <header className="bg-gray-800 px-4 py-2 flex items-center gap-6 shrink-0">
-        <h1 className="text-xl font-bold tracking-wide">✦ Dead Stars</h1>
+    <div style={{ height: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      {/* Header */}
+      <header style={{
+        background: "var(--surface)",
+        borderBottom: "1px solid var(--border)",
+        padding: "10px 20px",
+        display: "flex",
+        alignItems: "center",
+        gap: "20px",
+        flexShrink: 0,
+        zIndex: 10,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+            <path d="M11 2L13.2 8.2L20 8.2L14.4 12.3L16.6 18.5L11 14.4L5.4 18.5L7.6 12.3L2 8.2L8.8 8.2Z"
+              fill="var(--sun)" opacity="0.9"/>
+            <path d="M11 2L13.2 8.2L20 8.2L14.4 12.3L16.6 18.5L11 14.4L5.4 18.5L7.6 12.3L2 8.2L8.8 8.2Z"
+              stroke="var(--sun)" strokeWidth="0.5" fill="none"/>
+          </svg>
+          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: "0.03em", color: "var(--text)" }}>Dead Stars</span>
+        </div>
+
         {stats && (
-          <div className="flex gap-4 text-sm">
-            <span>Total: <strong>{stats.total}</strong></span>
-            <span className="text-red-400">Dead: <strong>{stats.likely_dead}</strong></span>
-            <span className="text-yellow-400">Uncertain: <strong>{stats.uncertain}</strong></span>
-            <span className="text-green-400">Alive: <strong>{stats.alive}</strong></span>
+          <div style={{ display: "flex", gap: 8, marginLeft: 8, flexWrap: "wrap" }}>
+            <span className="stat-chip">
+              <span style={{ color: "var(--text-muted)" }}>Total</span>
+              <strong style={{ color: "var(--text)" }}>{stats.total.toLocaleString()}</strong>
+            </span>
+            <span className="stat-chip">
+              <span className="dot dot-dead" />
+              <span style={{ color: "var(--text-muted)" }}>Dead</span>
+              <strong style={{ color: "var(--dead)" }}>{stats.likely_dead.toLocaleString()}</strong>
+            </span>
+            <span className="stat-chip">
+              <span className="dot dot-uncertain" />
+              <span style={{ color: "var(--text-muted)" }}>Uncertain</span>
+              <strong style={{ color: "var(--uncertain)" }}>{stats.uncertain.toLocaleString()}</strong>
+            </span>
+            <span className="stat-chip">
+              <span className="dot dot-alive" />
+              <span style={{ color: "var(--text-muted)" }}>Alive</span>
+              <strong style={{ color: "var(--alive)" }}>{stats.alive.toLocaleString()}</strong>
+            </span>
           </div>
         )}
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="w-1/2 p-1">
+      {/* Body */}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        {/* 3D Map */}
+        <div style={{ flex: "0 0 55%", position: "relative", borderRight: "1px solid var(--border)" }}>
           <SkyMap stars={mapStars} />
         </div>
 
-        <div className="w-1/2 flex flex-col overflow-hidden">
-          <div className="flex-1 p-2 overflow-hidden">
+        {/* Right panel */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div style={{ flex: 1, overflow: "hidden", padding: "12px" }}>
             <StarTable
               data={data}
               isLoading={isLoading}
               onSelect={setSelectedHip}
+              selectedHip={selectedHip}
               statusFilter={statusFilter}
               onStatusChange={(s) => { setStatusFilter(s); setPage(1); }}
               search={search}
@@ -54,7 +88,14 @@ export default function App() {
           </div>
 
           {selectedHip && (
-            <div className="border-t border-gray-700 p-4 shrink-0 overflow-auto max-h-72">
+            <div style={{
+              borderTop: "1px solid var(--border)",
+              padding: "12px",
+              flexShrink: 0,
+              overflowY: "auto",
+              maxHeight: "280px",
+              background: "var(--surface)",
+            }}>
               <StarDetail hipId={selectedHip} onClose={() => setSelectedHip(null)} />
             </div>
           )}

@@ -3,15 +3,15 @@ import Plot from "react-plotly.js";
 import type { Star } from "../types/star";
 
 const STATUS_COLORS: Record<string, string> = {
-  "likely dead": "#ef4444",
-  uncertain:     "#f59e0b",
-  alive:         "#22c55e",
+  "likely dead": "#f04a4a",
+  uncertain:     "#f0b84a",
+  alive:         "#4af07a",
 };
 
 function toXYZ(star: Star): [number, number, number] {
-  const d = star.distance_ly;
+  const d   = star.distance_ly;
   const ra  = (star.RAdeg  * Math.PI) / 180;
-  const dec = (star.DEdeg * Math.PI) / 180;
+  const dec = (star.DEdeg  * Math.PI) / 180;
   return [
     d * Math.cos(dec) * Math.cos(ra),
     d * Math.cos(dec) * Math.sin(ra),
@@ -24,10 +24,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const groups: Record<string, Star[]> = {};
     for (const s of stars) {
       if (!s.distance_ly || s.distance_ly <= 0 || !s.RAdeg || !s.DEdeg) continue;
-      if (s.distance_ly > 100000) continue; // filter parallax outliers
+      if (s.distance_ly > 100_000) continue;
       (groups[s.status] ??= []).push(s);
     }
-
     return Object.entries(groups).map(([status, items]) => {
       const coords = items.map(toXYZ);
       return {
@@ -38,10 +37,15 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         y: coords.map(c => c[1]),
         z: coords.map(c => c[2]),
         text: items.map(s =>
-          `HIP ${s.HIP}<br>${s.SpType || ""}<br>${s.distance_ly?.toFixed(0)} ly<br>${s.status}`
+          `<b>HIP ${s.HIP}</b><br>${s.SpType || "—"}<br>${s.distance_ly?.toFixed(0)} ly`
         ),
         hovertemplate: "%{text}<extra></extra>",
-        marker: { color: STATUS_COLORS[status] || "#888", size: 2, opacity: 0.8 },
+        marker: {
+          color: STATUS_COLORS[status] || "#888",
+          size: 2,
+          opacity: 0.85,
+          line: { width: 0 },
+        },
       };
     });
   }, [stars]);
@@ -52,35 +56,43 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     name: "Sun",
     x: [0], y: [0], z: [0],
     text: ["☀"],
+    textfont: { size: 14 },
     textposition: "top center",
-    hovertemplate: "Sun<extra></extra>",
-    marker: { color: "#fde68a", size: 5 },
+    hovertemplate: "Sun (origin)<extra></extra>",
+    marker: { color: "#fde98a", size: 6, opacity: 1 },
   };
 
   return (
     <Plot
       data={[...traces, sunTrace] as any}
       layout={{
-        paper_bgcolor: "#030712",
+        paper_bgcolor: "#04050f",
         scene: {
-          bgcolor: "#030712",
-          xaxis: { title: "X (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
-          yaxis: { title: "Y (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
-          zaxis: { title: "Z (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
-          camera: { eye: { x: 0.8, y: 1.5, z: 0.6 }, center: { x: 0, y: 0, z: 0 } },
+          bgcolor: "#04050f",
+          xaxis: { title: "", gridcolor: "rgba(255,255,255,0.05)", zerolinecolor: "rgba(255,255,255,0.08)", tickfont: { color: "#3d4460", size: 10 }, showticklabels: false },
+          yaxis: { title: "", gridcolor: "rgba(255,255,255,0.05)", zerolinecolor: "rgba(255,255,255,0.08)", tickfont: { color: "#3d4460", size: 10 }, showticklabels: false },
+          zaxis: { title: "", gridcolor: "rgba(255,255,255,0.05)", zerolinecolor: "rgba(255,255,255,0.08)", tickfont: { color: "#3d4460", size: 10 }, showticklabels: false },
+          camera: { eye: { x: 0.9, y: 1.6, z: 0.7 }, center: { x: 0, y: 0, z: 0 } },
           aspectmode: "cube",
+          dragmode: "orbit",
         },
-        font: { color: "#9ca3af" },
+        font: { color: "#7a82a6", family: "Satoshi, Inter, sans-serif", size: 12 },
         margin: { t: 0, r: 0, b: 0, l: 0 },
         autosize: true,
         legend: {
-          x: 0.01, y: 0.99,
-          bgcolor: "rgba(3,7,18,0.7)",
-          bordercolor: "#374151",
+          x: 0.02, y: 0.98,
+          bgcolor: "rgba(4,5,15,0.8)",
+          bordercolor: "rgba(255,255,255,0.07)",
           borderwidth: 1,
+          font: { size: 12, color: "#7a82a6" },
+        },
+        hoverlabel: {
+          bgcolor: "#0d1124",
+          bordercolor: "rgba(255,255,255,0.14)",
+          font: { color: "#e8eaf0", size: 13, family: "Satoshi, Inter, sans-serif" },
         },
       }}
-      config={{ displayModeBar: false }}
+      config={{ displayModeBar: false, scrollZoom: true }}
       useResizeHandler
       style={{ width: "100%", height: "100%" }}
     />
