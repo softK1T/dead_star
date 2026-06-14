@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchStars, fetchStar, fetchStats } from "../api/stars";
 
-export function useStars(status?: string, search?: string, page = 1) {
+export function useStars(status?: string, search?: string, page = 1, limit = 50) {
   return useQuery({
-    queryKey: ["stars", status, search, page],
-    queryFn: () => fetchStars(status, search, page),
+    queryKey: ["stars", status, search, page, limit],
+    queryFn: () => fetchStars(status, search, page, limit),
   });
 }
 
