@@ -122,19 +122,32 @@ function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
           </div>
         ))}
       </div>
+      <div style={{ marginTop: 8, fontSize: 9, color: "#3d4460", textAlign: "center" }}>click to select</div>
     </div>
   );
 }
 
-export default function SkyMap({ stars }: { stars: Star[] }) {
-  const mountRef   = useRef<HTMLDivElement>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
-  const hlRef      = useRef<THREE.BufferAttribute | null>(null);
-  const parsedRef  = useRef<P[]>([]);
-  const sizeRef    = useRef({ w: 800, h: 600 });
+interface Props {
+  stars: Star[];
+  flyToHip?: number | null;
+  onStarClick?: (hip: number) => void;
+  selectedHip?: number | null;
+}
+
+export default function SkyMap({ stars, flyToHip, onStarClick, selectedHip }: Props) {
+  const mountRef    = useRef<HTMLDivElement>(null);
+  const cleanupRef  = useRef<(() => void) | null>(null);
+  const hlRef       = useRef<THREE.BufferAttribute | null>(null);
+  const parsedRef   = useRef<P[]>([]);
+  const sizeRef     = useRef({ w: 800, h: 600 });
+  const cameraRef   = useRef<THREE.PerspectiveCamera | null>(null);
+  const speedRef    = useRef(50);
   const [tooltip, setTooltip]   = useState<Tip | null>(null);
   const [locked,  setLocked]    = useState(false);
-  const lastMoveRef = useRef(0);
+  const [speedDisplay, setSpeedDisplay] = useState(50);
+  const lastMoveRef  = useRef(0);
+  const flyTargetRef = useRef<THREE.Vector3 | null>(null);
+  const hipIndexRef  = useRef<Map<number, number>>(new Map()); // HIP → array index
 
   const parsed = useMemo(() => {
     if (!stars?.length) return [];
@@ -142,6 +155,32 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
   }, [stars]);
 
   useEffect(() => { parsedRef.current = parsed; }, [parsed]);
+
+  // Fly to star when flyToHip changes
+  useEffect(() => {
+    if (flyToHip == null || !cameraRef.current) return;
+    const idx = hipIndexRef.current.get(flyToHip);
+    if (idx == null) return;
+    const s = parsedRef.current[idx];
+    if (!s) return;
+    const target = toXYZ(s.distance_ly, s.RAdeg, s.DEdeg);
+    // Stop 20ly short so we can see the star
+    const dir = target.clone().normalize();
+    flyTargetRef.current = target.clone().addScaledVector(dir, -20);
+  }, [flyToHip]);
+
+  // Highlight selected star from outside
+  useEffect(() => {
+    const attr = hlRef.current;
+    if (!attr) return;
+    const n = parsedRef.current.length + 1;
+    for (let i = 0; i < n; i++) attr.setX(i, 0);
+    if (selectedHip != null) {
+      const idx = hipIndexRef.current.get(selectedHip);
+      if (idx != null) attr.setX(idx, 1);
+    }
+    attr.needsUpdate = true;
+  }, [selectedHip]);
 
   useEffect(() => {
     const el = mountRef.current;
@@ -151,23 +190,21 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const W = el.clientWidth || 800, H = el.clientHeight || 600;
     sizeRef.current = { w: W, h: H };
 
-    // ── Renderer ──────────────────────────────────────────────────────────
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(W, H);
     renderer.setClearColor(0x03040e, 1);
-    // tabIndex so the canvas can receive keyboard focus
     renderer.domElement.tabIndex = 0;
     renderer.domElement.style.outline = "none";
     el.appendChild(renderer.domElement);
 
-    // ── Scene & Camera ────────────────────────────────────────────────────
     const scene = new THREE.Scene();
     const maxDist = parsed.reduce((m, s) => Math.max(m, s.distance_ly), 0);
     const FAR = Math.max(maxDist * 2.5, 200_000);
 
     const camera = new THREE.PerspectiveCamera(60, W / H, 0.5, FAR);
     camera.position.set(0, 0, 0);
+    cameraRef.current = camera;
     const gcRA = (266 * Math.PI) / 180, gcDec = (-29 * Math.PI) / 180;
     camera.lookAt(
       Math.cos(gcDec) * Math.cos(gcRA) * 1000,
@@ -175,7 +212,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       -Math.cos(gcDec) * Math.sin(gcRA) * 1000,
     );
 
-    // ── Background dust ───────────────────────────────────────────────────
+    // Background
     const bgPos = new Float32Array(12_000 * 3);
     for (let i = 0; i < 12_000; i++) {
       const d = Math.random() * FAR * 0.6;
@@ -191,15 +228,17 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       color: 0x1a2840, size: 0.7, sizeAttenuation: false, transparent: true, opacity: 0.45,
     })));
 
-    // ── Star geometry ─────────────────────────────────────────────────────
+    // Stars
     const n   = parsed.length;
     const pos = new Float32Array((n + 1) * 3);
     const col = new Float32Array((n + 1) * 3);
     const siz = new Float32Array(n + 1);
     const hl  = new Float32Array(n + 1);
+    const hipMap = new Map<number, number>();
 
     for (let i = 0; i < n; i++) {
       const s = parsed[i];
+      hipMap.set(s.HIP, i);
       const v = toXYZ(s.distance_ly, s.RAdeg, s.DEdeg);
       pos[i*3] = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
       const c = spectralColor(s.SpType);
@@ -211,6 +250,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     pos[n*3] = 0; pos[n*3+1] = 0; pos[n*3+2] = 0;
     col[n*3] = 1; col[n*3+1] = 0.94; col[n*3+2] = 0.55;
     siz[n] = 5;
+    hipIndexRef.current = hipMap;
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position",   new THREE.BufferAttribute(pos, 3));
@@ -230,14 +270,13 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const points = new THREE.Points(geo, mat);
     scene.add(points);
 
-    // ── Raycaster ─────────────────────────────────────────────────────────
+    // Raycaster
     const raycaster = new THREE.Raycaster();
     let prevHl = -1;
+    let hoverIdx = -1;
 
     const onMouseMove = (e: MouseEvent) => {
-      // ---- Flight mode: rotate camera ----
       if (document.pointerLockElement === renderer.domElement) {
-        // Читаем euler из текущего quaternion — не накапливаем рассинхрон
         const euler = new THREE.Euler(0, 0, 0, "YXZ");
         euler.setFromQuaternion(camera.quaternion);
         euler.y -= e.movementX * 0.002;
@@ -245,8 +284,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         camera.quaternion.setFromEuler(euler);
         return;
       }
-
-      // ---- Normal mode: tooltip ----
       const now = Date.now();
       if (now - lastMoveRef.current < 30) return;
       lastMoveRef.current = now;
@@ -255,8 +292,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       const mx = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
       const my = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
       raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
-
-      // World-space threshold ≈ 12px at reference distance 200ly
       const pxWorld = Math.tan(30 * Math.PI / 180) * 2 / sizeRef.current.h;
       raycaster.params.Points!.threshold = 12 * pxWorld * 200;
 
@@ -265,9 +300,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       if (!attr) return;
 
       if (prevHl >= 0) { attr.setX(prevHl, 0); prevHl = -1; }
+      hoverIdx = -1;
 
       if (hits.length > 0) {
-        // Screen-space nearest
         let bestIdx = -1, bestD2 = Infinity;
         const proj = new THREE.Vector3();
         for (const h of hits) {
@@ -281,7 +316,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
           if (d2 < bestD2) { bestD2 = d2; bestIdx = hi; }
         }
         if (bestIdx >= 0 && Math.sqrt(bestD2) <= 14) {
-          attr.setX(bestIdx, 1); prevHl = bestIdx;
+          attr.setX(bestIdx, 1); prevHl = bestIdx; hoverIdx = bestIdx;
           const star = parsedRef.current[bestIdx];
           if (star) setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star });
         } else { setTooltip(null); }
@@ -289,39 +324,54 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       attr.needsUpdate = true;
     };
 
-    document.addEventListener("mousemove", onMouseMove);
+    // Click: select hovered star
+    const onClick = (e: MouseEvent) => {
+      if (document.pointerLockElement === renderer.domElement) return;
+      if (hoverIdx >= 0 && hoverIdx < parsedRef.current.length) {
+        const star = parsedRef.current[hoverIdx];
+        if (star && onStarClick) onStarClick(star.HIP);
+      } else {
+        // Click on empty space → enter pointer lock
+        renderer.domElement.requestPointerLock();
+      }
+    };
 
-    // ── Keyboard ──────────────────────────────────────────────────────────
-    // Listen on window so keys work even if canvas not focused
+    document.addEventListener("mousemove", onMouseMove);
+    renderer.domElement.addEventListener("click", onClick);
+
+    // Keyboard
     const keys: Record<string, boolean> = {};
     const onKD = (e: KeyboardEvent) => {
-      // Prevent arrow keys from scrolling the page when navigating
       if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
       keys[e.code] = true;
+      // H = home
+      if (e.code === "KeyH") {
+        camera.position.set(0, 0, 0);
+        camera.lookAt(
+          Math.cos(gcDec) * Math.cos(gcRA) * 1000,
+          Math.sin(gcDec) * 1000,
+          -Math.cos(gcDec) * Math.sin(gcRA) * 1000,
+        );
+        flyTargetRef.current = null;
+      }
     };
     const onKU = (e: KeyboardEvent) => { keys[e.code] = false; };
     window.addEventListener("keydown", onKD);
     window.addEventListener("keyup",   onKU);
 
-    // ── Pointer Lock ──────────────────────────────────────────────────────
     const onPLC = () => {
       const isLocked = document.pointerLockElement === renderer.domElement;
       setLocked(isLocked);
       if (isLocked) { setTooltip(null); renderer.domElement.focus(); }
     };
     document.addEventListener("pointerlockchange", onPLC);
-    renderer.domElement.addEventListener("click", () => {
-      renderer.domElement.requestPointerLock();
-    });
 
-    // ── Scroll speed ──────────────────────────────────────────────────────
-    let speed = 50;
     const onWheel = (e: WheelEvent) => {
-      speed = Math.max(0.5, Math.min(50_000, speed * (e.deltaY > 0 ? 0.82 : 1.22)));
+      speedRef.current = Math.max(0.5, Math.min(50_000, speedRef.current * (e.deltaY > 0 ? 0.82 : 1.22)));
+      setSpeedDisplay(Math.round(speedRef.current));
     };
     el.addEventListener("wheel", onWheel, { passive: true });
 
-    // ── Resize ────────────────────────────────────────────────────────────
     const obs = new ResizeObserver(() => {
       const w = el.clientWidth, h = el.clientHeight;
       sizeRef.current = { w, h };
@@ -330,31 +380,53 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     });
     obs.observe(el);
 
-    // ── Game loop ─────────────────────────────────────────────────────────
     const clock = new THREE.Clock();
     const fwd   = new THREE.Vector3();
     const right = new THREE.Vector3();
+    const tmpV  = new THREE.Vector3();
     let animId = 0;
 
     const tick = () => {
       animId = requestAnimationFrame(tick);
       const dt  = Math.min(clock.getDelta(), 0.05);
-      const spd = speed * dt;
+      const spd = speedRef.current * dt;
       camera.getWorldDirection(fwd);
       right.crossVectors(fwd, camera.up).normalize();
 
-      if (keys["KeyW"] || keys["ArrowUp"])    camera.position.addScaledVector(fwd,   spd);
-      if (keys["KeyS"] || keys["ArrowDown"])  camera.position.addScaledVector(fwd,  -spd);
-      if (keys["KeyA"] || keys["ArrowLeft"])  camera.position.addScaledVector(right,-spd);
-      if (keys["KeyD"] || keys["ArrowRight"]) camera.position.addScaledVector(right, spd);
-      if (keys["KeyE"] || keys["Space"])      camera.position.y += spd;
-      if (keys["KeyQ"] || keys["ShiftLeft"])  camera.position.y -= spd;
+      // Manual keys
+      const anyKey = keys["KeyW"]||keys["KeyS"]||keys["KeyA"]||keys["KeyD"]||
+                     keys["KeyE"]||keys["KeyQ"]||keys["ArrowUp"]||keys["ArrowDown"]||
+                     keys["ArrowLeft"]||keys["ArrowRight"]||keys["Space"]||keys["ShiftLeft"];
+      if (anyKey) {
+        flyTargetRef.current = null; // cancel fly-to on manual input
+        if (keys["KeyW"] || keys["ArrowUp"])    camera.position.addScaledVector(fwd,   spd);
+        if (keys["KeyS"] || keys["ArrowDown"])  camera.position.addScaledVector(fwd,  -spd);
+        if (keys["KeyA"] || keys["ArrowLeft"])  camera.position.addScaledVector(right,-spd);
+        if (keys["KeyD"] || keys["ArrowRight"]) camera.position.addScaledVector(right, spd);
+        if (keys["KeyE"] || keys["Space"])      camera.position.y += spd;
+        if (keys["KeyQ"] || keys["ShiftLeft"])  camera.position.y -= spd;
+      }
+
+      // Auto fly-to
+      const flyTarget = flyTargetRef.current;
+      if (flyTarget) {
+        tmpV.subVectors(flyTarget, camera.position);
+        const dist = tmpV.length();
+        if (dist < 5) {
+          flyTargetRef.current = null;
+        } else {
+          const flySpeed = Math.min(dist * 2, dist * 0.1 / dt); // decelerate near target
+          const step = Math.min(flySpeed * dt, dist - 1);
+          camera.position.addScaledVector(tmpV.normalize(), step);
+          // Look toward target
+          camera.lookAt(flyTarget);
+        }
+      }
 
       renderer.render(scene, camera);
     };
     tick();
 
-    // ── Cleanup ───────────────────────────────────────────────────────────
     cleanupRef.current = () => {
       cancelAnimationFrame(animId);
       obs.disconnect();
@@ -362,29 +434,41 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       window.removeEventListener("keyup",   onKU);
       document.removeEventListener("pointerlockchange", onPLC);
       document.removeEventListener("mousemove", onMouseMove);
+      renderer.domElement.removeEventListener("click", onClick);
       el.removeEventListener("wheel", onWheel);
       renderer.dispose();
       geo.dispose(); mat.dispose(); bgGeo.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };
-  }, [parsed]);
+  }, [parsed, onStarClick]);
 
   useEffect(() => () => { cleanupRef.current?.(); }, []);
 
+  const resetCamera = () => {
+    const camera = cameraRef.current;
+    if (!camera) return;
+    flyTargetRef.current = null;
+    camera.position.set(0, 0, 0);
+    const gcRA = (266 * Math.PI) / 180, gcDec = (-29 * Math.PI) / 180;
+    camera.lookAt(
+      Math.cos(gcDec) * Math.cos(gcRA) * 1000,
+      Math.sin(gcDec) * 1000,
+      -Math.cos(gcDec) * Math.sin(gcRA) * 1000,
+    );
+  };
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div ref={mountRef} style={{ width: "100%", height: "100%", cursor: locked ? "none" : tooltip ? "crosshair" : "default" }} />
+      <div ref={mountRef} style={{ width: "100%", height: "100%", cursor: locked ? "none" : tooltip ? "pointer" : "default" }} />
 
       {tooltip && !locked && <Tooltip tip={tooltip} cw={sizeRef.current.w} ch={sizeRef.current.h} />}
 
-      {/* Crosshair in flight mode */}
+      {/* Crosshair */}
       {locked && (
-        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", pointerEvents: "none", opacity: 0.6 }}>
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", pointerEvents: "none", opacity: 0.5 }}>
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#ffffff" strokeWidth="1">
-            <line x1="10" y1="2" x2="10" y2="8" />
-            <line x1="10" y1="12" x2="10" y2="18" />
-            <line x1="2" y1="10" x2="8" y2="10" />
-            <line x1="12" y1="10" x2="18" y2="10" />
+            <line x1="10" y1="2" x2="10" y2="8" /><line x1="10" y1="12" x2="10" y2="18" />
+            <line x1="2" y1="10" x2="8" y2="10" /><line x1="12" y1="10" x2="18" y2="10" />
           </svg>
         </div>
       )}
@@ -403,23 +487,58 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         </div>
       </div>
 
-      {/* Controls hint — hidden while locked */}
+      {/* Home button */}
+      <button
+        onClick={resetCamera}
+        title="Reset camera to Sun (H)"
+        style={{
+          position: "absolute", top: 14, right: 14,
+          background: "rgba(4,5,15,0.80)",
+          border: "1px solid rgba(255,255,255,0.10)",
+          borderRadius: 8, width: 34, height: 34,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer", color: "#6a7296", zIndex: 20,
+          backdropFilter: "blur(6px)",
+          transition: "color 0.15s, border-color 0.15s",
+        }}
+        onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "#c8cfe8"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.25)"; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "#6a7296"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.10)"; }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9,22 9,12 15,12 15,22"/>
+        </svg>
+      </button>
+
+      {/* Controls hint */}
       {!locked && (
         <div style={{ ...panel, bottom: 14, left: 14 }}>
-          <div style={{ color: "#6a7296", fontWeight: 600, marginBottom: 2 }}>NAVIGATION</div>
-          {([["Click","enter fly mode"],["W/S","forward/back"],["A/D","strafe"],["E/Q","up/down"],["Scroll","speed"],["Esc","exit"]] as [string,string][]).map(([k,v]) => (
+          <div style={{ color: "#4a5278", fontWeight: 600, marginBottom: 2, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em" }}>Navigation</div>
+          {([
+            ["Click star",  "select & open detail"],
+            ["Click space", "enter fly mode"],
+            ["W/S A/D",     "move"],
+            ["E/Q",         "up/down"],
+            ["Scroll",      "speed"],
+            ["H",           "home"],
+            ["Esc",         "exit fly"],
+          ] as [string,string][]).map(([k,v]) => (
             <div key={k} style={{ display: "flex", gap: 6 }}>
-              <span style={{ color: "#4a5278", minWidth: 52, fontWeight: 600 }}>{k}</span>
+              <span style={{ color: "#4a5278", minWidth: 60, fontWeight: 600 }}>{k}</span>
               <span style={{ color: "#3d4460" }}>{v}</span>
             </div>
           ))}
         </div>
       )}
 
-      {/* Speed indicator while flying */}
+      {/* Speed + ESC hint in fly mode */}
       {locked && (
-        <div style={{ ...panel, bottom: 14, right: 14, textAlign: "right" }}>
-          <div style={{ color: "#3d4460", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em" }}>Esc to exit</div>
+        <div style={{ ...panel, bottom: 14, left: "50%", transform: "translateX(-50%)", textAlign: "center", minWidth: 120 }}>
+          <div style={{ color: "#3d4460", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 2 }}>Speed</div>
+          <div style={{ color: "#c8cfe8", fontVariantNumeric: "tabular-nums", fontSize: 13, fontWeight: 600 }}>
+            {speedDisplay >= 1000 ? (speedDisplay / 1000).toFixed(1) + "\u00a0kly/s" : speedDisplay + "\u00a0ly/s"}
+          </div>
+          <div style={{ color: "#3d4460", fontSize: 9, marginTop: 4 }}>Scroll to change \u00b7 Esc to exit</div>
         </div>
       )}
     </div>
