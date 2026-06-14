@@ -14,46 +14,65 @@ function spectralColor(spType: string): THREE.Color {
   return new THREE.Color(0x8899bb);
 }
 
-function toXYZ(s: Star): THREE.Vector3 {
-  const d   = s.distance_ly;
-  const ra  = (s.RAdeg  * Math.PI) / 180;
-  const dec = (s.DEdeg  * Math.PI) / 180;
+interface ParsedStar {
+  HIP: number;
+  SpType: string;
+  status: string;
+  distance_ly: number;
+  RAdeg: number;
+  DEdeg: number;
+  L: number;
+}
+
+function parseStar(s: Star): ParsedStar | null {
+  const d   = Number(s.distance_ly);
+  const ra  = Number(s.RAdeg);
+  const dec = Number(s.DEdeg);
+  if (!isFinite(d) || d <= 0 || d > 50_000) return null;
+  if (!isFinite(ra) || !isFinite(dec))       return null;
+  return {
+    HIP: Number(s.HIP),
+    SpType: String(s.SpType || ""),
+    status: String(s.status || ""),
+    distance_ly: d,
+    RAdeg: ra,
+    DEdeg: dec,
+    L: Number(s.L) || 1,
+  };
+}
+
+function toXYZ(d: number, ra: number, dec: number): THREE.Vector3 {
+  const raR  = (ra  * Math.PI) / 180;
+  const decR = (dec * Math.PI) / 180;
   return new THREE.Vector3(
-    d * Math.cos(dec) * Math.cos(ra),
-    d * Math.sin(dec),
-    -d * Math.cos(dec) * Math.sin(ra),
+    d * Math.cos(decR) * Math.cos(raR),
+    d * Math.sin(decR),
+    -d * Math.cos(decR) * Math.sin(raR),
   );
 }
 
 export default function SkyMap({ stars }: { stars: Star[] }) {
   const mountRef   = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  const [dbg, setDbg] = useState("");
+  const [dbg, setDbg] = useState("waiting for data...");
 
-  const validStars = useMemo(() => {
-    const v = stars.filter(s =>
-      s.distance_ly > 0 &&
-      s.distance_ly <= 50_000 &&
-      s.RAdeg != null &&
-      s.DEdeg != null
-    );
-    return v;
+  const parsed = useMemo(() => {
+    const result = stars.map(parseStar).filter((s): s is ParsedStar => s !== null);
+    return result;
   }, [stars]);
 
   useEffect(() => {
     const el = mountRef.current;
     if (!el) return;
 
-    // show debug info regardless of star count
-    if (validStars.length === 0) {
-      const sample = stars[0];
-      setDbg(`total props: ${stars.length} | valid: 0 | sample: ${JSON.stringify(sample)}`);
+    if (parsed.length === 0) {
+      const s0 = stars[0];
+      setDbg(`props.stars=${stars.length} | parsed=0 | raw[0]=${JSON.stringify(s0).slice(0, 200)}`);
       return;
     }
 
-    const s0 = validStars[0];
-    const v0 = toXYZ(s0);
-    setDbg(`stars: ${validStars.length} | first HIP:${s0.HIP} d:${s0.distance_ly?.toFixed(0)}ly xyz:(${v0.x.toFixed(0)},${v0.y.toFixed(0)},${v0.z.toFixed(0)})`);
+    const s0 = parsed[0];
+    setDbg(`parsed=${parsed.length} | HIP${s0.HIP} d=${s0.distance_ly.toFixed(0)}ly ra=${s0.RAdeg.toFixed(1)} dec=${s0.DEdeg.toFixed(1)}`);
 
     cleanupRef.current?.();
     cleanupRef.current = null;
@@ -68,51 +87,52 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     el.appendChild(renderer.domElement);
 
     const scene  = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, W / H, 0.1, 500_000);
 
-    // compute bounding sphere of all stars and place camera outside it
-    const positions = validStars.map(toXYZ);
+    // build positions first to compute bounding box
+    const positions = parsed.map(s => toXYZ(s.distance_ly, s.RAdeg, s.DEdeg));
     const box = new THREE.Box3();
     positions.forEach(p => box.expandByPoint(p));
     const center = new THREE.Vector3();
-    box.getCenter(center);
     const size   = new THREE.Vector3();
+    box.getCenter(center);
     box.getSize(size);
-    const radius = size.length() * 0.6;
+    const radius = size.length() * 0.55;
 
-    camera.position.copy(center);
-    camera.position.z += radius * 1.2;
+    const camera = new THREE.PerspectiveCamera(75, W / H, 1, radius * 10);
+    camera.position.copy(center).addScalar(0);
+    camera.position.z = center.z + radius * 1.3;
     camera.lookAt(center);
 
-    setDbg(prev => prev + ` | cam z:${camera.position.z.toFixed(0)} radius:${radius.toFixed(0)}`);
+    setDbg(prev => prev + ` | center=(${center.x.toFixed(0)},${center.y.toFixed(0)},${center.z.toFixed(0)}) r=${radius.toFixed(0)} cam.z=${camera.position.z.toFixed(0)}`);
 
     // background dust
-    const bgPos = new Float32Array(5000 * 3);
-    for (let i = 0; i < 5000; i++) {
-      bgPos[i*3]   = center.x + (Math.random() - 0.5) * radius * 3;
-      bgPos[i*3+1] = center.y + (Math.random() - 0.5) * radius * 3;
-      bgPos[i*3+2] = center.z + (Math.random() - 0.5) * radius * 3;
+    const bgPos = new Float32Array(6000 * 3);
+    for (let i = 0; i < 6000; i++) {
+      bgPos[i*3]   = center.x + (Math.random() - 0.5) * radius * 4;
+      bgPos[i*3+1] = center.y + (Math.random() - 0.5) * radius * 4;
+      bgPos[i*3+2] = center.z + (Math.random() - 0.5) * radius * 4;
     }
     const bgGeo = new THREE.BufferGeometry();
     bgGeo.setAttribute("position", new THREE.BufferAttribute(bgPos, 3));
     scene.add(new THREE.Points(bgGeo, new THREE.PointsMaterial({
-      color: 0x223355, size: 1.0, sizeAttenuation: false,
+      color: 0x1a2a44, size: 1.2, sizeAttenuation: false,
     })));
 
-    // star points
-    const n      = validStars.length;
+    // hipparcos stars
+    const n      = parsed.length;
     const pos    = new Float32Array(n * 3);
     const colors = new Float32Array(n * 3);
     const sizes  = new Float32Array(n);
 
     for (let i = 0; i < n; i++) {
-      const s = validStars[i];
+      const s = parsed[i];
       const v = positions[i];
       pos[i*3] = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
       const col = spectralColor(s.SpType);
       colors[i*3] = col.r; colors[i*3+1] = col.g; colors[i*3+2] = col.b;
-      const lum  = s.L && +s.L > 0 ? Math.log10(+s.L + 1) : 0.3;
-      sizes[i]   = Math.max(2, Math.min(6, lum * 2)) * (s.status === "likely dead" ? 1.6 : 1);
+      const lum  = s.L > 0 ? Math.log10(s.L + 1) : 0.3;
+      const base = Math.max(2, Math.min(7, lum * 2.2));
+      sizes[i]   = s.status === "likely dead" ? base * 1.5 : base;
     }
 
     const geo = new THREE.BufferGeometry();
@@ -137,8 +157,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
           vec2  uv = gl_PointCoord - 0.5;
           float d  = length(uv);
           if (d > 0.5) discard;
-          float a = 1.0 - smoothstep(0.1, 0.5, d);
-          gl_FragColor = vec4(vCol, a);
+          float core = 1.0 - smoothstep(0.05, 0.5, d);
+          float halo = exp(-d * d * 10.0) * 0.6;
+          gl_FragColor = vec4(vCol + halo * 0.3, clamp(core + halo, 0.0, 1.0));
         }
       `,
       transparent: true,
@@ -148,11 +169,11 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     });
     scene.add(new THREE.Points(geo, mat));
 
-    // Sun sprite
+    // Sun glow at origin
     const sc = document.createElement("canvas");
     sc.width = sc.height = 64;
     const sctx = sc.getContext("2d")!;
-    const sg   = sctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    const sg = sctx.createRadialGradient(32, 32, 0, 32, 32, 32);
     sg.addColorStop(0, "rgba(253,233,138,1)");
     sg.addColorStop(1, "rgba(0,0,0,0)");
     sctx.fillStyle = sg;
@@ -160,7 +181,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const sunSp = new THREE.Sprite(new THREE.SpriteMaterial({
       map: new THREE.CanvasTexture(sc), blending: THREE.AdditiveBlending, transparent: true,
     }));
-    sunSp.scale.set(radius * 0.05, radius * 0.05, 1);
+    sunSp.scale.setScalar(radius * 0.04);
     scene.add(sunSp);
 
     // controls
@@ -184,9 +205,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     document.addEventListener("pointerlockchange", onLC);
     document.addEventListener("mousemove", onMM);
 
-    let speed = radius * 0.3;
+    let speed = radius * 0.25;
     const onWheel = (e: WheelEvent) => {
-      speed = Math.max(1, Math.min(radius * 5, speed * (e.deltaY > 0 ? 0.85 : 1.18)));
+      speed = Math.max(1, Math.min(radius * 8, speed * (e.deltaY > 0 ? 0.85 : 1.18)));
     };
     el.addEventListener("wheel", onWheel, { passive: true });
 
@@ -226,7 +247,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       renderer.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };
-  }, [validStars]);
+  }, [parsed]);
 
   useEffect(() => () => { cleanupRef.current?.(); }, []);
 
@@ -234,13 +255,11 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <div ref={mountRef} style={{ width: "100%", height: "100%" }} />
 
-      {/* debug bar */}
       <div style={{
         position: "absolute", top: 0, left: 0, right: 0,
-        background: "rgba(255,0,0,0.15)", color: "#f87",
-        fontSize: 10, padding: "3px 8px",
-        fontFamily: "monospace", pointerEvents: "none",
-        zIndex: 99, wordBreak: "break-all",
+        background: "rgba(0,0,0,0.7)", color: "#f87171",
+        fontSize: 10, padding: "3px 8px", fontFamily: "monospace",
+        pointerEvents: "none", zIndex: 99, wordBreak: "break-all",
       }}>{dbg}</div>
 
       <div style={{ ...panel, bottom: 14, left: 14 }}>
