@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query, Request
+import pandas as pd
 
 router = APIRouter(prefix="/api")
 
@@ -15,7 +16,8 @@ async def get_stars(
     status: str | None = Query(None),
     search: str | None = Query(None),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=5000),  # до 5000 за раз
+    limit: int = Query(50, ge=1, le=5000),
+    map_mode: bool = Query(False),  # True — для 3D карты: равномерная выборка по всем статусам
 ):
     df = request.app.state.df
 
@@ -25,10 +27,23 @@ async def get_stars(
         df = df[df["HIP"].astype(str).str.contains(search, na=False)]
 
     total = len(df)
+
+    if map_mode and not status:
+        # равномерный сэмпл: limit/3 на каждый статус, рандомно
+        per_status = limit // 3
+        frames = []
+        for s in ["alive", "likely dead", "uncertain"]:
+            chunk = df[df["status"] == s]
+            if len(chunk) > per_status:
+                chunk = chunk.sample(per_status, random_state=42)
+            frames.append(chunk)
+        df_map = pd.concat(frames)
+        rows = df_map[COLUMNS].fillna(value="").to_dict(orient="records")
+        return {"data": rows, "total": total, "page": 1, "limit": limit}
+
     start = (page - 1) * limit
     end = start + limit
     rows = df.iloc[start:end][COLUMNS].fillna(value="").to_dict(orient="records")
-
     return {"data": rows, "total": total, "page": page, "limit": limit}
 
 

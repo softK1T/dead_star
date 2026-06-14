@@ -10,11 +10,10 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [selectedHip, setSelectedHip] = useState<number | null>(null);
 
-  // таблица — постраничная, 50 за раз
   const { data, isLoading } = useStars(statusFilter || undefined, search || undefined, page, 50);
 
-  // 3D карта — до 5000 звёзд одним запросом, фильтр по статусу тот же
-  const { data: mapData } = useStars(statusFilter || undefined, undefined, 1, 5000);
+  // 3D карта: map_mode=true — равномерная выборка по всем статусам
+  const { data: mapData } = useStars(statusFilter || undefined, undefined, 1, 3000, true);
 
   const { data: stats } = useStats();
   const mapStars = mapData?.data ?? [];

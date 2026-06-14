@@ -11,7 +11,7 @@ const STATUS_COLORS: Record<string, string> = {
 function toXYZ(star: Star): [number, number, number] {
   const d = star.distance_ly;
   const ra  = (star.RAdeg  * Math.PI) / 180;
-  const dec = (star.DEdeg  * Math.PI) / 180;
+  const dec = (star.DEdeg * Math.PI) / 180;
   return [
     d * Math.cos(dec) * Math.cos(ra),
     d * Math.cos(dec) * Math.sin(ra),
@@ -23,7 +23,9 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
   const traces = useMemo(() => {
     const groups: Record<string, Star[]> = {};
     for (const s of stars) {
-      if (!s.distance_ly || !s.RAdeg || !s.DEdeg) continue;
+      if (!s.distance_ly || s.distance_ly <= 0 || !s.RAdeg || !s.DEdeg) continue;
+      // убираем абсурдные расстояния (ошибка параллакса)
+      if (s.distance_ly > 100000) continue;
       (groups[s.status] ??= []).push(s);
     }
 
@@ -36,12 +38,14 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         x: coords.map(c => c[0]),
         y: coords.map(c => c[1]),
         z: coords.map(c => c[2]),
-        text: items.map(s => `HIP ${s.HIP}<br>${s.SpType || ""}<br>${s.distance_ly?.toFixed(0)} ly`),
+        text: items.map(s =>
+          `HIP ${s.HIP}<br>${s.SpType || ""}<br>${s.distance_ly?.toFixed(0)} ly<br>${s.status}`
+        ),
         hovertemplate: "%{text}<extra></extra>",
         marker: {
           color: STATUS_COLORS[status] || "#888",
-          size: 2.5,
-          opacity: 0.85,
+          size: 2,
+          opacity: 0.8,
         },
       };
     });
@@ -52,10 +56,10 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     mode: "markers+text",
     name: "Sun",
     x: [0], y: [0], z: [0],
-    text: ["☀ Sun"],
+    text: ["☀"],
     textposition: "top center",
-    hoverinfo: "text",
-    marker: { color: "#fde68a", size: 6, symbol: "circle" },
+    hovertemplate: "Sun<extra></extra>",
+    marker: { color: "#fde68a", size: 5 },
   };
 
   return (
@@ -65,15 +69,22 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         paper_bgcolor: "#030712",
         scene: {
           bgcolor: "#030712",
-          xaxis: { title: "X (ly)", gridcolor: "#1f2937", zerolinecolor: "#374151" },
-          yaxis: { title: "Y (ly)", gridcolor: "#1f2937", zerolinecolor: "#374151" },
-          zaxis: { title: "Z (ly)", gridcolor: "#1f2937", zerolinecolor: "#374151" },
-          camera: { eye: { x: 1.4, y: 1.4, z: 0.8 } },
+          xaxis: { title: "X (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
+          yaxis: { title: "Y (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
+          zaxis: { title: "Z (ly)", gridcolor: "#1f2937", zerolinecolor: "#4b5563" },
+          // камера сверху и немного сбоку — звёзды видны сразу
+          camera: { eye: { x: 0.8, y: 1.5, z: 0.6 }, center: { x: 0, y: 0, z: 0 } },
+          aspectmode: "cube",
         },
-        font: { color: "#d1d5db" },
+        font: { color: "#9ca3af" },
         margin: { t: 0, r: 0, b: 0, l: 0 },
         autosize: true,
-        legend: { x: 0, y: 1, bgcolor: "rgba(0,0,0,0.4)" },
+        legend: {
+          x: 0.01, y: 0.99,
+          bgcolor: "rgba(3,7,18,0.7)",
+          bordercolor: "#374151",
+          borderwidth: 1,
+        },
       }}
       config={{ displayModeBar: false }}
       useResizeHandler

@@ -8,9 +8,10 @@ export async function fetchStars(
   search?: string,
   page = 1,
   limit = 50,
+  mapMode = false,
 ): Promise<StarsResponse> {
   const { data } = await api.get<StarsResponse>("/stars", {
-    params: { status, search, page, limit },
+    params: { status, search, page, limit, map_mode: mapMode },
   });
   return data;
 }
