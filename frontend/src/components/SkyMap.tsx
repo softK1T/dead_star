@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState, useCallback } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import * as THREE from "three";
 import type { Star } from "../types/star";
 
@@ -32,7 +32,7 @@ function parse(s: Star): P | null {
   };
 }
 
-function xyz(d: number, ra: number, dec: number) {
+function toXYZ(d: number, ra: number, dec: number) {
   const r = (ra * Math.PI) / 180, de = (dec * Math.PI) / 180;
   return new THREE.Vector3(
     d * Math.cos(de) * Math.cos(r),
@@ -49,17 +49,14 @@ const VERT = /* glsl */`
   varying   vec3  vColor;
   varying   float vHL;
   varying   float vBrightness;
-
   void main() {
-    vColor = aColor;
-    vHL    = aHighlight;
-    vec4  mvPos = modelViewMatrix * vec4(position, 1.0);
-    float dist  = max(-mvPos.z, 0.1);
-    float scale = uRefDist / dist;
-    float px    = aSize * clamp(scale, 0.3, 5.0);
+    vColor = aColor; vHL = aHighlight;
+    vec4  mv   = modelViewMatrix * vec4(position, 1.0);
+    float dist = max(-mv.z, 0.1);
+    float px   = aSize * clamp(uRefDist / dist, 0.3, 5.0);
     gl_PointSize  = clamp(px, 1.5, 24.0) * (1.0 + aHighlight * 1.8);
     vBrightness   = clamp(px / 3.5, 0.25, 1.0);
-    gl_Position   = projectionMatrix * mvPos;
+    gl_Position   = projectionMatrix * mv;
   }
 `;
 
@@ -67,7 +64,6 @@ const FRAG = /* glsl */`
   varying vec3  vColor;
   varying float vHL;
   varying float vBrightness;
-
   void main() {
     vec2  uv = gl_PointCoord - 0.5;
     float d  = length(uv) * 2.0;
@@ -75,8 +71,7 @@ const FRAG = /* glsl */`
     float core = exp(-d * d * 9.0);
     float glow = exp(-d * d * 2.5) * 0.30;
     float a    = (core + glow) * vBrightness;
-    vec3 col   = mix(vColor, vec3(1.0), core * 0.38);
-    col += vec3(vHL * 0.5) * core;
+    vec3 col   = mix(vColor, vec3(1.0), core * 0.38) + vec3(vHL * 0.5) * core;
     gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
   }
 `;
@@ -92,13 +87,12 @@ interface Tip { x: number; y: number; star: P; }
 function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
   const color = STATUS_COLOR[tip.star.status] ?? "#8899bb";
   const W = 180, H = 90, PAD = 14;
-  let left = tip.x + PAD;
-  let top  = tip.y - H / 2;
+  let left = tip.x + PAD, top = tip.y - H / 2;
   if (left + W > cw - 6) left = tip.x - W - PAD;
   if (top < 6) top = 6;
   if (top + H > ch - 6) top = ch - H - 6;
   const trem = tip.star.t_remaining_gyr;
-  const tremStr = !isFinite(trem) ? "—"
+  const tremStr = !isFinite(trem) ? "\u2014"
     : Math.abs(trem) < 0.001 ? "< 1 Myr"
     : Math.abs(trem) < 1 ? (trem * 1000).toFixed(0) + " Myr"
     : trem.toFixed(1) + " Gyr";
@@ -106,18 +100,15 @@ function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
   return (
     <div style={{
       position: "absolute", left, top, width: W,
-      background: "rgba(5,6,18,0.92)",
-      border: `1px solid ${color}44`,
-      borderRadius: 8, padding: "10px 12px",
-      pointerEvents: "none", zIndex: 50,
+      background: "rgba(5,6,18,0.92)", border: `1px solid ${color}44`,
+      borderRadius: 8, padding: "10px 12px", pointerEvents: "none", zIndex: 50,
       backdropFilter: "blur(12px)",
       boxShadow: `0 0 20px ${color}22, 0 4px 24px rgba(0,0,0,0.5)`,
-      fontFamily: "inherit",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: color, boxShadow: `0 0 6px ${color}`, flexShrink: 0, display: "inline-block" }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e6f5", letterSpacing: "0.02em" }}>HIP\u00a0{tip.star.HIP}</span>
-        <span style={{ marginLeft: "auto", fontSize: 11, color, fontWeight: 500 }}>{tip.star.SpType || "—"}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e6f5" }}>HIP\u00a0{tip.star.HIP}</span>
+        <span style={{ marginLeft: "auto", fontSize: 11, color, fontWeight: 500 }}>{tip.star.SpType || "\u2014"}</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0 4px", textAlign: "center" }}>
         {([
@@ -141,7 +132,8 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
   const hlRef      = useRef<THREE.BufferAttribute | null>(null);
   const parsedRef  = useRef<P[]>([]);
   const sizeRef    = useRef({ w: 800, h: 600 });
-  const [tooltip, setTooltip] = useState<Tip | null>(null);
+  const [tooltip, setTooltip]   = useState<Tip | null>(null);
+  const [locked,  setLocked]    = useState(false);
   const lastMoveRef = useRef(0);
 
   const parsed = useMemo(() => {
@@ -155,17 +147,21 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     const el = mountRef.current;
     if (!el || parsed.length === 0) return;
     cleanupRef.current?.();
-    cleanupRef.current = null;
 
     const W = el.clientWidth || 800, H = el.clientHeight || 600;
     sizeRef.current = { w: W, h: H };
 
+    // ── Renderer ──────────────────────────────────────────────────────────
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(W, H);
     renderer.setClearColor(0x03040e, 1);
+    // tabIndex so the canvas can receive keyboard focus
+    renderer.domElement.tabIndex = 0;
+    renderer.domElement.style.outline = "none";
     el.appendChild(renderer.domElement);
 
+    // ── Scene & Camera ────────────────────────────────────────────────────
     const scene = new THREE.Scene();
     const maxDist = parsed.reduce((m, s) => Math.max(m, s.distance_ly), 0);
     const FAR = Math.max(maxDist * 2.5, 200_000);
@@ -179,7 +175,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       -Math.cos(gcDec) * Math.sin(gcRA) * 1000,
     );
 
-    // Background dust
+    // ── Background dust ───────────────────────────────────────────────────
     const bgPos = new Float32Array(12_000 * 3);
     for (let i = 0; i < 12_000; i++) {
       const d = Math.random() * FAR * 0.6;
@@ -195,7 +191,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       color: 0x1a2840, size: 0.7, sizeAttenuation: false, transparent: true, opacity: 0.45,
     })));
 
-    // Star geometry
+    // ── Star geometry ─────────────────────────────────────────────────────
     const n   = parsed.length;
     const pos = new Float32Array((n + 1) * 3);
     const col = new Float32Array((n + 1) * 3);
@@ -204,16 +200,16 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
 
     for (let i = 0; i < n; i++) {
       const s = parsed[i];
-      const v = xyz(s.distance_ly, s.RAdeg, s.DEdeg);
+      const v = toXYZ(s.distance_ly, s.RAdeg, s.DEdeg);
       pos[i*3] = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
       const c = spectralColor(s.SpType);
       col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
-      const lum  = s.L > 0 ? Math.log10(s.L + 1) : 0;
-      const base = 2 + lum * 3.2;
-      siz[i] = s.status === "likely dead" ? Math.min(base * 1.35, 12) : Math.min(base, 12);
+      const lum = s.L > 0 ? Math.log10(s.L + 1) : 0;
+      siz[i] = Math.min(2 + lum * 3.2 * (s.status === "likely dead" ? 1.35 : 1), 12);
     }
+    // Sun
     pos[n*3] = 0; pos[n*3+1] = 0; pos[n*3+2] = 0;
-    col[n*3] = 1.0; col[n*3+1] = 0.94; col[n*3+2] = 0.55;
+    col[n*3] = 1; col[n*3+1] = 0.94; col[n*3+2] = 0.55;
     siz[n] = 5;
 
     const geo = new THREE.BufferGeometry();
@@ -231,143 +227,144 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       blending: THREE.AdditiveBlending,
       uniforms: { uRefDist: { value: 500 } },
     });
-    // Persistent Points object — MUST be added to scene so matrixWorld is valid
     const points = new THREE.Points(geo, mat);
     scene.add(points);
 
-    // Raycaster: threshold in WORLD UNITS = how many ly from the ray
-    // We want ~8px tolerance on screen. At distance D and FOV 60, 1px ≈ 2*D*tan(30°)/screenH
-    // We use a small fixed world threshold and rely on nearest-first sorting.
+    // ── Raycaster ─────────────────────────────────────────────────────────
     const raycaster = new THREE.Raycaster();
-    raycaster.params.Points = { threshold: 1 }; // 1 ly — tight, recalculated on each move
-
     let prevHl = -1;
 
-    const onMM = (e: MouseEvent) => {
-      const now = Date.now();
-      if (now - lastMoveRef.current < 32) return;
-      lastMoveRef.current = now;
-
+    const onMouseMove = (e: MouseEvent) => {
+      // ---- Flight mode: rotate camera ----
       if (document.pointerLockElement === renderer.domElement) {
-        // flight mode — no tooltip
+        // Читаем euler из текущего quaternion — не накапливаем рассинхрон
         const euler = new THREE.Euler(0, 0, 0, "YXZ");
         euler.setFromQuaternion(camera.quaternion);
         euler.y -= e.movementX * 0.002;
-        euler.x  = Math.max(-1.5, Math.min(1.5, euler.x - e.movementY * 0.002));
+        euler.x  = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, euler.x - e.movementY * 0.002));
         camera.quaternion.setFromEuler(euler);
         return;
       }
 
+      // ---- Normal mode: tooltip ----
+      const now = Date.now();
+      if (now - lastMoveRef.current < 30) return;
+      lastMoveRef.current = now;
+
       const rect = el.getBoundingClientRect();
       const mx = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
       const my = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
-
       raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
 
-      // threshold: ~6px in world units at the distance of nearest visible star
-      // tan(halfFov) * 2 / screenHeight gives world units per pixel at unit distance
-      const pxPerUnit = Math.tan((60 / 2) * Math.PI / 180) * 2 / sizeRef.current.h;
-      // Use a generous 12px pick radius but scale with distance
-      // We'll just set a reasonable world-space value and let Three sort by distance
-      raycaster.params.Points!.threshold = 12 * pxPerUnit * 200; // ~12px at 200ly ref
+      // World-space threshold ≈ 12px at reference distance 200ly
+      const pxWorld = Math.tan(30 * Math.PI / 180) * 2 / sizeRef.current.h;
+      raycaster.params.Points!.threshold = 12 * pxWorld * 200;
 
-      // intersectObject works correctly because `points` is in the scene
       const hits = raycaster.intersectObject(points);
+      const attr = hlRef.current;
+      if (!attr) return;
 
-      const hlAttr2 = hlRef.current;
-      if (!hlAttr2) return;
-
-      if (prevHl >= 0) { hlAttr2.setX(prevHl, 0); prevHl = -1; }
+      if (prevHl >= 0) { attr.setX(prevHl, 0); prevHl = -1; }
 
       if (hits.length > 0) {
-        // Pick the hit closest to camera (Three already sorts by distance)
-        const idx = hits[0].index!;
-        // Extra guard: confirm this point is actually the nearest among all hits
-        // within 16px screen-space by comparing projected screen positions
-        let bestIdx = idx;
-        let bestDist2 = Infinity;
+        // Screen-space nearest
+        let bestIdx = -1, bestD2 = Infinity;
         const proj = new THREE.Vector3();
         for (const h of hits) {
           const hi = h.index!;
-          proj.set(pos[hi*3], pos[hi*3+1], pos[hi*3+2]);
-          proj.project(camera);
+          proj.set(pos[hi*3], pos[hi*3+1], pos[hi*3+2]).project(camera);
           const sx = (proj.x + 1) / 2 * sizeRef.current.w;
           const sy = (1 - proj.y) / 2 * sizeRef.current.h;
           const dx = sx - (e.clientX - rect.left);
           const dy = sy - (e.clientY - rect.top);
           const d2 = dx*dx + dy*dy;
-          if (d2 < bestDist2) { bestDist2 = d2; bestIdx = hi; }
+          if (d2 < bestD2) { bestD2 = d2; bestIdx = hi; }
         }
-        // Only highlight if within 14px screen radius
-        if (Math.sqrt(bestDist2) <= 14) {
-          hlAttr2.setX(bestIdx, 1);
-          prevHl = bestIdx;
+        if (bestIdx >= 0 && Math.sqrt(bestD2) <= 14) {
+          attr.setX(bestIdx, 1); prevHl = bestIdx;
           const star = parsedRef.current[bestIdx];
           if (star) setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top, star });
-        } else {
-          setTooltip(null);
-        }
-      } else {
-        setTooltip(null);
-      }
-      hlAttr2.needsUpdate = true;
+        } else { setTooltip(null); }
+      } else { setTooltip(null); }
+      attr.needsUpdate = true;
     };
 
-    // Controls
+    document.addEventListener("mousemove", onMouseMove);
+
+    // ── Keyboard ──────────────────────────────────────────────────────────
+    // Listen on window so keys work even if canvas not focused
     const keys: Record<string, boolean> = {};
-    const euler = new THREE.Euler(0, 0, 0, "YXZ");
-    let locked = false;
-    euler.setFromQuaternion(camera.quaternion);
-    const onKD = (ev: KeyboardEvent) => { keys[ev.code] = true; };
-    const onKU = (ev: KeyboardEvent) => { keys[ev.code] = false; };
+    const onKD = (e: KeyboardEvent) => {
+      // Prevent arrow keys from scrolling the page when navigating
+      if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code)) e.preventDefault();
+      keys[e.code] = true;
+    };
+    const onKU = (e: KeyboardEvent) => { keys[e.code] = false; };
     window.addEventListener("keydown", onKD);
     window.addEventListener("keyup",   onKU);
-    renderer.domElement.addEventListener("click", () => renderer.domElement.requestPointerLock());
-    const onLC = () => {
-      locked = document.pointerLockElement === renderer.domElement;
-      if (locked) setTooltip(null);
+
+    // ── Pointer Lock ──────────────────────────────────────────────────────
+    const onPLC = () => {
+      const isLocked = document.pointerLockElement === renderer.domElement;
+      setLocked(isLocked);
+      if (isLocked) { setTooltip(null); renderer.domElement.focus(); }
     };
-    document.addEventListener("pointerlockchange", onLC);
-    document.addEventListener("mousemove", onMM);
+    document.addEventListener("pointerlockchange", onPLC);
+    renderer.domElement.addEventListener("click", () => {
+      renderer.domElement.requestPointerLock();
+    });
 
+    // ── Scroll speed ──────────────────────────────────────────────────────
     let speed = 50;
-    el.addEventListener("wheel", (ev: WheelEvent) => {
-      speed = Math.max(0.5, Math.min(50_000, speed * (ev.deltaY > 0 ? 0.82 : 1.22)));
-    }, { passive: true });
+    const onWheel = (e: WheelEvent) => {
+      speed = Math.max(0.5, Math.min(50_000, speed * (e.deltaY > 0 ? 0.82 : 1.22)));
+    };
+    el.addEventListener("wheel", onWheel, { passive: true });
 
+    // ── Resize ────────────────────────────────────────────────────────────
     const obs = new ResizeObserver(() => {
       const w = el.clientWidth, h = el.clientHeight;
       sizeRef.current = { w, h };
-      camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h);
+      camera.aspect = w / h; camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
     });
     obs.observe(el);
 
+    // ── Game loop ─────────────────────────────────────────────────────────
     const clock = new THREE.Clock();
-    const fwd = new THREE.Vector3(), right = new THREE.Vector3();
+    const fwd   = new THREE.Vector3();
+    const right = new THREE.Vector3();
     let animId = 0;
+
     const tick = () => {
       animId = requestAnimationFrame(tick);
-      const dt = Math.min(clock.getDelta(), 0.05);
+      const dt  = Math.min(clock.getDelta(), 0.05);
       const spd = speed * dt;
       camera.getWorldDirection(fwd);
       right.crossVectors(fwd, camera.up).normalize();
-      if (keys["KeyW"] || keys["ArrowUp"])    camera.position.addScaledVector(fwd,    spd);
-      if (keys["KeyS"] || keys["ArrowDown"])  camera.position.addScaledVector(fwd,   -spd);
-      if (keys["KeyD"] || keys["ArrowRight"]) camera.position.addScaledVector(right,  spd);
-      if (keys["KeyA"] || keys["ArrowLeft"])  camera.position.addScaledVector(right, -spd);
+
+      if (keys["KeyW"] || keys["ArrowUp"])    camera.position.addScaledVector(fwd,   spd);
+      if (keys["KeyS"] || keys["ArrowDown"])  camera.position.addScaledVector(fwd,  -spd);
+      if (keys["KeyA"] || keys["ArrowLeft"])  camera.position.addScaledVector(right,-spd);
+      if (keys["KeyD"] || keys["ArrowRight"]) camera.position.addScaledVector(right, spd);
       if (keys["KeyE"] || keys["Space"])      camera.position.y += spd;
       if (keys["KeyQ"] || keys["ShiftLeft"])  camera.position.y -= spd;
+
       renderer.render(scene, camera);
     };
     tick();
 
+    // ── Cleanup ───────────────────────────────────────────────────────────
     cleanupRef.current = () => {
-      cancelAnimationFrame(animId); obs.disconnect();
+      cancelAnimationFrame(animId);
+      obs.disconnect();
       window.removeEventListener("keydown", onKD);
       window.removeEventListener("keyup",   onKU);
-      document.removeEventListener("pointerlockchange", onLC);
-      document.removeEventListener("mousemove", onMM);
+      document.removeEventListener("pointerlockchange", onPLC);
+      document.removeEventListener("mousemove", onMouseMove);
+      el.removeEventListener("wheel", onWheel);
       renderer.dispose();
+      geo.dispose(); mat.dispose(); bgGeo.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
     };
   }, [parsed]);
@@ -376,10 +373,23 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div ref={mountRef} style={{ width: "100%", height: "100%", cursor: tooltip ? "crosshair" : "default" }} />
+      <div ref={mountRef} style={{ width: "100%", height: "100%", cursor: locked ? "none" : tooltip ? "crosshair" : "default" }} />
 
-      {tooltip && <Tooltip tip={tooltip} cw={sizeRef.current.w} ch={sizeRef.current.h} />}
+      {tooltip && !locked && <Tooltip tip={tooltip} cw={sizeRef.current.w} ch={sizeRef.current.h} />}
 
+      {/* Crosshair in flight mode */}
+      {locked && (
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", pointerEvents: "none", opacity: 0.6 }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#ffffff" strokeWidth="1">
+            <line x1="10" y1="2" x2="10" y2="8" />
+            <line x1="10" y1="12" x2="10" y2="18" />
+            <line x1="2" y1="10" x2="8" y2="10" />
+            <line x1="12" y1="10" x2="18" y2="10" />
+          </svg>
+        </div>
+      )}
+
+      {/* Legend */}
       <div style={{ ...panel, top: 14, left: 14 }}>
         {(["likely dead", "uncertain", "alive"] as const).map(s => (
           <div key={s} style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: 2 }}>
@@ -393,15 +403,25 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
         </div>
       </div>
 
-      <div style={{ ...panel, bottom: 14, left: 14 }}>
-        <div style={{ color: "#6a7296", fontWeight: 600, marginBottom: 2 }}>NAVIGATION</div>
-        {([["W/S","forward/back"],["A/D","strafe"],["E/Q","up/down"],["Scroll","speed"],["Click","capture mouse"],["Esc","release"]] as [string,string][]).map(([k,v]) => (
-          <div key={k} style={{ display: "flex", gap: 6 }}>
-            <span style={{ color: "#4a5278", minWidth: 48, fontWeight: 600 }}>{k}</span>
-            <span style={{ color: "#3d4460" }}>{v}</span>
-          </div>
-        ))}
-      </div>
+      {/* Controls hint — hidden while locked */}
+      {!locked && (
+        <div style={{ ...panel, bottom: 14, left: 14 }}>
+          <div style={{ color: "#6a7296", fontWeight: 600, marginBottom: 2 }}>NAVIGATION</div>
+          {([["Click","enter fly mode"],["W/S","forward/back"],["A/D","strafe"],["E/Q","up/down"],["Scroll","speed"],["Esc","exit"]] as [string,string][]).map(([k,v]) => (
+            <div key={k} style={{ display: "flex", gap: 6 }}>
+              <span style={{ color: "#4a5278", minWidth: 52, fontWeight: 600 }}>{k}</span>
+              <span style={{ color: "#3d4460" }}>{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Speed indicator while flying */}
+      {locked && (
+        <div style={{ ...panel, bottom: 14, right: 14, textAlign: "right" }}>
+          <div style={{ color: "#3d4460", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em" }}>Esc to exit</div>
+        </div>
+      )}
     </div>
   );
 }
