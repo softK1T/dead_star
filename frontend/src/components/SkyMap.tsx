@@ -41,56 +41,37 @@ function xyz(d: number, ra: number, dec: number) {
   );
 }
 
-/* ── shaders ─────────────────────────────────────────────────────────────
-   gl_PointSize is attenuated by clip-space w so distant stars appear
-   physically smaller. We also pass aColor brightness down so halo
-   intensity scales with intrinsic luminosity, not just screen size.
-*/
 const VERT = /* glsl */`
   attribute float aSize;
   attribute vec3  aColor;
   attribute float aHighlight;
   varying   vec3  vColor;
   varying   float vHL;
-  varying   float vAlpha;       // distance-based fade for faint far stars
-
+  varying   float vAlpha;
   void main() {
     vColor = aColor;
     vHL    = aHighlight;
-
     vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
-    float dist = -mvPos.z;               // positive distance from camera
-
-    // attenuate: size shrinks with distance, min 1px so star is always a dot
-    float attenuated = aSize * 300.0 / max(dist, 1.0);
-    gl_PointSize = clamp(attenuated, 1.0, 28.0) * (1.0 + aHighlight * 1.4);
-
-    // alpha fade: very faint distant stars dissolve gracefully
-    vAlpha = clamp(attenuated / 2.0, 0.15, 1.0);
-
+    float dist = -mvPos.z;
+    float att  = aSize * 300.0 / max(dist, 1.0);
+    gl_PointSize = clamp(att, 1.0, 28.0) * (1.0 + aHighlight * 1.4);
+    vAlpha = clamp(att / 2.0, 0.15, 1.0);
     gl_Position = projectionMatrix * mvPos;
   }
 `;
-
 const FRAG = /* glsl */`
   varying vec3  vColor;
   varying float vHL;
   varying float vAlpha;
-
   void main() {
     vec2  uv   = gl_PointCoord - 0.5;
     float d    = length(uv) * 2.0;
     if (d > 1.0) discard;
-
-    // tight bright core + soft halo; halo is dimmer than before
-    float core = exp(-d * d * 8.0);          // sharper core
-    float halo = exp(-d * d * 2.2) * 0.28;  // softer, less bloomy halo
+    float core = exp(-d * d * 8.0);
+    float halo = exp(-d * d * 2.2) * 0.28;
     float a    = (core + halo) * vAlpha;
-
-    // color: core brightens toward white, halo stays spectral
-    vec3 col = mix(vColor, vec3(1.0), core * 0.35);
-    col += vec3(vHL * 0.45) * core;           // highlight on core only
-
+    vec3  col  = mix(vColor, vec3(1.0), core * 0.35);
+    col += vec3(vHL * 0.45) * core;
     gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
   }
 `;
@@ -111,23 +92,19 @@ function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
   if (left + W > cw - 6) left = tip.x - W - PAD;
   if (top < 6) top = 6;
   if (top + H > ch - 6) top = ch - H - 6;
-
   const trem = tip.star.t_remaining_gyr;
   const tremStr = !isFinite(trem) ? "—"
     : Math.abs(trem) < 0.001 ? "< 1 Myr"
     : Math.abs(trem) < 1 ? (trem * 1000).toFixed(0) + " Myr"
     : trem.toFixed(1) + " Gyr";
   const tremColor = trem < 0 ? "#f04a4a" : trem < 0.5 ? "#f0b84a" : "#c8cfe8";
-
   return (
     <div style={{
       position: "absolute", left, top, width: W,
       background: "rgba(5,6,18,0.92)",
       border: `1px solid ${color}44`,
-      borderRadius: 8,
-      padding: "10px 12px",
-      pointerEvents: "none",
-      zIndex: 50,
+      borderRadius: 8, padding: "10px 12px",
+      pointerEvents: "none", zIndex: 50,
       backdropFilter: "blur(12px)",
       boxShadow: `0 0 20px ${color}22, 0 4px 24px rgba(0,0,0,0.5)`,
       fontFamily: "inherit",
@@ -154,11 +131,11 @@ function Tooltip({ tip, cw, ch }: { tip: Tip; cw: number; ch: number }) {
 }
 
 export default function SkyMap({ stars }: { stars: Star[] }) {
-  const mountRef   = useRef<HTMLDivElement>(null);
-  const cleanupRef = useRef<(() => void) | null>(null);
-  const hlRef      = useRef<THREE.BufferAttribute | null>(null);
-  const parsedRef  = useRef<P[]>([]);
-  const sizeRef    = useRef({ w: 800, h: 600 });
+  const mountRef    = useRef<HTMLDivElement>(null);
+  const cleanupRef  = useRef<(() => void) | null>(null);
+  const hlRef       = useRef<THREE.BufferAttribute | null>(null);
+  const parsedRef   = useRef<P[]>([]);
+  const sizeRef     = useRef({ w: 800, h: 600 });
   const [tooltip, setTooltip] = useState<Tip | null>(null);
   const lastMoveRef = useRef(0);
 
@@ -167,7 +144,13 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     return stars.map(parse).filter((s): s is P => s !== null);
   }, [stars]);
 
-  const handleMouseMove = useCallback((e: MouseEvent, renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera, geo: THREE.BufferGeometry, el: HTMLDivElement) => {
+  const handleMouseMove = useCallback((
+    e: MouseEvent,
+    renderer: THREE.WebGLRenderer,
+    camera: THREE.PerspectiveCamera,
+    geo: THREE.BufferGeometry,
+    el: HTMLDivElement,
+  ) => {
     const now = Date.now();
     if (now - lastMoveRef.current < 30) return;
     lastMoveRef.current = now;
@@ -221,7 +204,7 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
     camera.position.set(center.x, center.y, center.z + radius * 1.4);
     camera.lookAt(center);
 
-    // background dust — tiny, no glow
+    // background dust
     const bgPos = new Float32Array(8_000 * 3);
     for (let i = 0; i < 8_000; i++) {
       bgPos[i*3]   = center.x + (Math.random() - 0.5) * radius * 6;
@@ -234,23 +217,29 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       color: 0x263556, size: 0.8, sizeAttenuation: false, transparent: true, opacity: 0.6,
     })));
 
-    // data stars — aSize is a base world-unit multiplier, shader does the attenuation
-    const n   = parsed.length;
-    const pos = new Float32Array(n * 3);
-    const col = new Float32Array(n * 3);
-    const siz = new Float32Array(n);
-    const hl  = new Float32Array(n);
+    // ---- build one Points object: data stars + Sun as last entry ----
+    const n = parsed.length;
+    // +1 slot for the Sun at origin
+    const pos = new Float32Array((n + 1) * 3);
+    const col = new Float32Array((n + 1) * 3);
+    const siz = new Float32Array(n + 1);
+    const hl  = new Float32Array(n + 1);
 
     for (let i = 0; i < n; i++) {
       const s = parsed[i], v = positions[i];
       pos[i*3] = v.x; pos[i*3+1] = v.y; pos[i*3+2] = v.z;
       const c = spectralColor(s.SpType);
       col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b;
-      // log luminosity → base size, tight range so dim stars stay small
       const lum  = s.L > 0 ? Math.log10(s.L + 1) : 0;
-      const base = 0.8 + lum * 1.6;   // world-unit size sent to shader
+      const base = 0.8 + lum * 1.6;
       siz[i] = s.status === "likely dead" ? base * 1.5 : base;
     }
+
+    // Sun entry — same shader, reasonable size
+    const si = n;
+    pos[si*3] = 0; pos[si*3+1] = 0; pos[si*3+2] = 0;   // origin
+    col[si*3] = 1.0; col[si*3+1] = 0.95; col[si*3+2] = 0.6; // warm yellow
+    siz[si] = 2.5;  // same world-unit scale as other G-type stars
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position",   new THREE.BufferAttribute(pos, 3));
@@ -266,16 +255,6 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
       transparent: true, depthWrite: false,
       blending: THREE.AdditiveBlending,
     })));
-
-    // Sun
-    const sc = document.createElement("canvas"); sc.width = sc.height = 128;
-    const ctx = sc.getContext("2d")!;
-    const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-    g.addColorStop(0, "rgba(255,240,150,1)"); g.addColorStop(0.3, "rgba(253,180,50,0.7)"); g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 128);
-    const sunSp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(sc), blending: THREE.AdditiveBlending, transparent: true }));
-    sunSp.scale.setScalar(radius * 0.05);
-    scene.add(sunSp);
 
     // controls
     const keys: Record<string, boolean> = {};
@@ -356,6 +335,10 @@ export default function SkyMap({ stars }: { stars: Star[] }) {
             <span style={{ color: "#6a7296" }}>{s}</span>
           </div>
         ))}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, lineHeight: 2 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#fde98a", boxShadow: "0 0 4px #fde98a", display: "inline-block", flexShrink: 0 }} />
+          <span style={{ color: "#6a7296" }}>Sun</span>
+        </div>
       </div>
 
       <div style={{ ...panel, bottom: 14, left: 14 }}>
